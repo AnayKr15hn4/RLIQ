@@ -1,0 +1,97 @@
+{
+  "theme": "dark",
+  "archetype": "Archetype 2: Performance Pro (Esports & Tactical Gaming Variant)",
+  "vibe": "Rocket League-inspired, high-octane neon, futuristic esports broadcast graphics, kinetic energy. Absolutely no AI-slop purple/violet gradients. Focus on solid bold dark gym/arena backgrounds with sharp accents.",
+  "typography": {
+    "headings": {
+      "family": "Rajdhani",
+      "weight": "font-bold to font-black",
+      "tracking": "tracking-tight to tracking-tighter",
+      "transform": "uppercase for main titles",
+      "usage": "Use for all Hero headings, HUD overlays, scoreboard text, and loading screen Rules."
+    },
+    "body": {
+      "family": "Chivo",
+      "weight": "font-normal to font-medium",
+      "tracking": "tracking-normal",
+      "usage": "Use for player explanations, question text, and standard UI text. Maintains technical feel while remaining readable."
+    },
+    "monospace": {
+      "family": "JetBrains Mono",
+      "usage": "Use for timestamps in the YouTube player, stat readouts, and score numbers."
+    }
+  },
+  "colors": {
+    "background": {
+      "main": "#050505",
+      "surface": "#111111",
+      "glass": "bg-black/60 backdrop-blur-xl"
+    },
+    "primary": {
+      "hex": "#FF6B00",
+      "name": "Boost Orange",
+      "usage": "Primary CTAs, active states, user score highlights."
+    },
+    "secondary": {
+      "hex": "#007AFF",
+      "name": "Volt Blue",
+      "usage": "Timeline scrubbers, secondary buttons, HUD borders."
+    },
+    "accents": {
+      "success": "#00FF66",
+      "danger": "#FF003C",
+      "warning": "#FFD500"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "muted": "#71717A"
+    }
+  },
+  "layout_and_spacing": {
+    "spacing_scale": "Use generous spacing. p-6 to p-8 inside cards, gap-6 to gap-8 for grids.",
+    "bento_grid": "Use Mode B 'Control Room' grid for the dashboard. Tight gaps, highly utilized space. For marketing, use overlapping elements.",
+    "hud_style": "Question modals and player UI should feel like an in-game HUD. Use sharp corners (rounded-none or max rounded-sm), clip-paths for angled cuts (e.g., [clip-path:polygon(10px_0,100%_0,100%_calc(100%-10px),calc(100%-10px)_100%,0_100%,0_10px)])."
+  },
+  "components": {
+    "buttons": "Sharp corners, heavy font weight. Use 'Boost Orange' or 'Volt Blue' with glowing hover effects (e.g., hover:shadow-[0_0_15px_rgba(255,107,0,0.5)]). Ensure text color is explicit on hover.",
+    "cards": "Dark backgrounds (#111111), 1px solid borders (border-white/10). No soft shadows, use 1px solid strokes or 2px 'Inner Glow' highlights.",
+    "inputs": "Shadcn defaults customized with sharp borders, dark backgrounds, and 'Volt Blue' focus rings.",
+    "modals": "HUD overlays for the quiz player. backdrop-blur-md, bg-black/80, 1px bright border. Must lock progress. Do not use generic white cards.",
+    "loading_screen": "MUST feature community 'Rules' (e.g., 'Rule #1: Always go for kickoff', 'Rule #0: Never break a front-to-front lock'). Large 'Rajdhani' font, centered, with a pulsing 'Boost Orange' loading bar underneath."
+  },
+  "animations": {
+    "transitions": "Snappy, mechanical transitions. 0.15s ease-out for hovers.",
+    "loading": "High-octane pulse or rotating octane-themed spinner.",
+    "question_appear": "HUD slide-in from side or bottom, fast with a slight 'glitch' or bounce effect to simulate game UI."
+  },
+  "images": {
+    "hero_background": {
+      "url": "https://images.unsplash.com/photo-1555532686-d0fccaccadcf?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA0MTJ8MHwxfHNlYXJjaHwxfHxuZW9uJTIwc3BvcnRzJTIwY2FyfGVufDB8fHx8MTc4MTA1OTkyNHww&ixlib=rb-4.1.0&q=85",
+      "description": "Close-up of a neon-lit sports car, serving as the Rocket League inspired hero background. Must have a heavy bg-black/60 overlay.",
+      "usage": "Landing page hero section"
+    },
+    "dashboard_empty_state": {
+      "url": "https://images.pexels.com/photos/596750/pexels-photo-596750.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "Illuminated gaming controller with blue lights on a dark background.",
+      "usage": "Empty state for player dashboard when no quizzes are active."
+    },
+    "creator_background": {
+      "url": "https://images.pexels.com/photos/7862508/pexels-photo-7862508.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "High-tech gaming setup with neon lights.",
+      "usage": "Background/accent image for the Creator Quiz Builder landing or auth page."
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the Dark theme. Do not use any generic SaaS white/gray layouts.",
+    "For the Headings, you MUST install and use the 'Rajdhani' font from Google Fonts.",
+    "The Loading screen is a core feature. It must randomly select a Rocket League 'Rule' (e.g., 'Rule #1: Always go for kickoff', 'Rule #0: Never break a front-to-front lock') to display while fetching videos/quizzes.",
+    "Quiz UI must overlay the YouTube player directly, functioning like an in-game HUD (glassy, sharp edges, neon borders).",
+    "Install @phosphor-icons/react for bold, athletic-looking icons (use Duotone or Fill weights for high impact).",
+    "All interactive elements MUST have a data-testid attribute in kebab-case based on role (e.g., data-testid='submit-answer-button').",
+    "Do NOT use pure #000000 for everything; use #050505 for base and #111111 for surfaces to provide depth.",
+    "Ensure contrast ratios are strictly adhered to. When placing text over hero images, use heavy overlays (bg-black/60) or text-shadows.",
+    "Avoid standard Shadcn borders on cards; instead, use 'Tactical Minimalism' with 1px borders and glowing hover states.",
+    "Do NOT use any purple, violet, or teal (#1B93A4) gradients as they are forbidden. Stick to Boost Orange (#FF6B00) and Volt Blue (#007AFF)."
+  ]
+}
