@@ -1,29 +1,32 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { useNavigate, useLocation, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { publicApi } from "@/lib/api";
 import { AuthShell, OtpInput, useCooldown } from "@/components/AuthShared";
 import { AlertCircle, MailCheck } from "lucide-react";
 import { toast } from "sonner";
 
 const RESEND_COOLDOWN = 60;
 
+function extractError(err, fallback) {
+  return (
+    err?.response?.data?.detail ||
+    (err && typeof err === "object" && typeof err.message === "string" && err.message) ||
+    fallback
+  );
+}
+
 export default function VerifyEmail() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { verifyOtp, resendSignupOtp } = useAuth();
+  const { signIn } = useAuth();
   const initialEmail = location.state?.email || "";
+  const initialPassword = location.state?.password || "";
   const [email, setEmail] = useState(initialEmail);
   const [code, setCode] = useState("");
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useCooldown(initialEmail ? RESEND_COOLDOWN : 0);
-
-  useEffect(() => {
-    if (!initialEmail) {
-      // If user landed here without an email in state, push them back to auth.
-      // (They can still type their email manually if they refresh.)
-    }
-  }, [initialEmail]);
 
   const submit = async (codeValue) => {
     setError(null);
@@ -31,17 +34,23 @@ export default function VerifyEmail() {
     if (!/^\d{6}$/.test(codeValue)) return setError("Enter the 6-digit code");
     setLoading(true);
     try {
-      const { data, error } = await verifyOtp(email, codeValue, "signup");
-      if (error) throw error;
-      if (data?.session) {
-        toast.success("Email verified. Welcome aboard.");
-        navigate("/dashboard", { replace: true });
-      } else {
-        toast.success("Email verified. Please sign in.");
-        navigate("/auth", { replace: true });
+      await publicApi.post("/auth/verify-code", {
+        email,
+        code: codeValue,
+        type: "signup",
+      });
+      toast.success("Email verified.");
+      // Try auto sign-in if we have the password
+      if (initialPassword) {
+        const { error } = await signIn(email, initialPassword);
+        if (!error) {
+          navigate("/dashboard", { replace: true });
+          return;
+        }
       }
+      navigate("/auth", { replace: true });
     } catch (err) {
-      setError(err?.message || "Invalid or expired code");
+      setError(extractError(err, "Invalid or expired code"));
     } finally {
       setLoading(false);
     }
@@ -52,12 +61,11 @@ export default function VerifyEmail() {
     if (!email) return setError("Enter your email first");
     if (cooldown > 0) return;
     try {
-      const { error } = await resendSignupOtp(email);
-      if (error) throw error;
+      await publicApi.post("/auth/resend-code", { email, type: "signup" });
       setCooldown(RESEND_COOLDOWN);
-      toast.success("New code sent. Check your inbox.");
+      toast.success("New code sent.");
     } catch (err) {
-      setError(err?.message || "Could not resend code");
+      setError(extractError(err, "Could not resend code"));
     }
   };
 
@@ -94,7 +102,7 @@ export default function VerifyEmail() {
           data-testid="verify-error"
         >
           <AlertCircle className="w-4 h-4 mt-0.5" />
-          <span>{error}</span>
+          <span>{String(error)}</span>
         </div>
       )}
 

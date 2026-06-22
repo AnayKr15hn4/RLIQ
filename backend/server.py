@@ -7,11 +7,13 @@ import os
 import logging
 import re
 import uuid
+import secrets
+import bcrypt
 import httpx
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Literal, Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 
 ROOT_DIR = Path(__file__).parent
@@ -23,6 +25,14 @@ db = client[os.environ['DB_NAME']]
 
 SUPABASE_URL = os.environ['SUPABASE_URL']
 SUPABASE_ANON_KEY = os.environ['SUPABASE_ANON_KEY']
+SUPABASE_SERVICE_KEY = os.environ['SUPABASE_SERVICE_KEY']
+BREVO_API_KEY = os.environ['BREVO_API_KEY']
+BREVO_SENDER_EMAIL = os.environ['BREVO_SENDER_EMAIL']
+BREVO_SENDER_NAME = os.environ.get('BREVO_SENDER_NAME', 'RLIQ')
+
+OTP_TTL_SECONDS = 600        # 10 minutes
+OTP_MAX_ATTEMPTS = 5
+OTP_RESEND_COOLDOWN = 60     # seconds
 
 app = FastAPI(title="RLIQ Quiz API")
 api_router = APIRouter(prefix="/api")
@@ -140,6 +150,155 @@ def user_display_name(user: Dict[str, Any]) -> str:
     )
 
 
+# ============== OTP / EMAIL AUTH ==============
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _norm_email(email: str) -> str:
+    return (email or "").strip().lower()
+
+
+def _gen_code() -> str:
+    # 6-digit numeric, zero-padded
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _hash_code(code: str) -> str:
+    return bcrypt.hashpw(code.encode(), bcrypt.gensalt()).decode()
+
+
+def _verify_code(code: str, code_hash: str) -> bool:
+    try:
+        return bcrypt.checkpw(code.encode(), code_hash.encode())
+    except ValueError:
+        return False
+
+
+async def _supa_admin(method: str, path: str, **kwargs) -> httpx.Response:
+    headers = {
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+        "Content-Type": "application/json",
+        **kwargs.pop("headers", {}),
+    }
+    async with httpx.AsyncClient(timeout=15.0) as hc:
+        return await hc.request(method, f"{SUPABASE_URL}{path}", headers=headers, **kwargs)
+
+
+async def _find_supa_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    # Supabase admin list-users supports filter by email
+    r = await _supa_admin("GET", f"/auth/v1/admin/users?email={email}")
+    if r.status_code != 200:
+        return None
+    data = r.json()
+    users = data.get("users") or []
+    for u in users:
+        if (u.get("email") or "").lower() == email:
+            return u
+    return None
+
+
+async def _send_otp_email(to_email: str, code: str, purpose: str) -> None:
+    """Send OTP via Brevo transactional HTTPS API."""
+    is_signup = purpose == "signup"
+    subject = "Verify your RLIQ account" if is_signup else "RLIQ password recovery code"
+    headline = "Verify your email" if is_signup else "Reset your password"
+    body_text = (
+        "Welcome to RLIQ. Use the code below to confirm your email."
+        if is_signup
+        else "We received a password reset request for your RLIQ account."
+    )
+    html = f"""<!doctype html>
+<html><body style="margin:0;padding:0;background:#050505;font-family:Arial,Helvetica,sans-serif;color:#fff;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#050505;padding:48px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border:1px solid #222;">
+        <tr><td style="padding:32px;">
+          <div style="font:700 13px/1.2 'Courier New',monospace;letter-spacing:.3em;color:#ff6b00;margin-bottom:8px;">/// RLIQ // {purpose.upper()}</div>
+          <h1 style="font:900 28px/1.1 Arial,sans-serif;text-transform:uppercase;margin:0 0 16px;color:#fff;">{headline}</h1>
+          <p style="font:14px/1.5 Arial,sans-serif;color:#a1a1aa;margin:0 0 24px;">{body_text}</p>
+          <div style="background:#000;border:1px solid #ff6b00;padding:24px;text-align:center;margin:0 0 24px;">
+            <div style="font:700 12px/1.2 'Courier New',monospace;letter-spacing:.25em;color:#ff6b00;margin-bottom:8px;">YOUR CODE</div>
+            <div style="font:900 40px/1 'Courier New',monospace;letter-spacing:.4em;color:#fff;">{code}</div>
+          </div>
+          <p style="font:13px/1.5 Arial,sans-serif;color:#71717a;margin:0 0 8px;">This code expires in 10 minutes.</p>
+          <p style="font:13px/1.5 Arial,sans-serif;color:#71717a;margin:0;">If you didn't request this, you can safely ignore this email.</p>
+          <hr style="border:none;border-top:1px solid #222;margin:32px 0 16px;" />
+          <div style="font:11px/1.4 'Courier New',monospace;letter-spacing:.2em;color:#52525b;">RLIQ // RULE #1: ALWAYS GO FOR KICKOFF.</div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+    payload = {
+        "sender": {"email": BREVO_SENDER_EMAIL, "name": BREVO_SENDER_NAME},
+        "to": [{"email": to_email}],
+        "subject": subject,
+        "htmlContent": html,
+    }
+    async with httpx.AsyncClient(timeout=15.0) as hc:
+        r = await hc.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={
+                "api-key": BREVO_API_KEY,
+                "accept": "application/json",
+                "content-type": "application/json",
+            },
+            json=payload,
+        )
+    if r.status_code >= 300:
+        logging.getLogger(__name__).error("Brevo send failed: %s %s", r.status_code, r.text)
+        raise HTTPException(status_code=502, detail="Could not send verification email. Try again.")
+
+
+async def _store_otp(email: str, otp_type: str, code: str) -> None:
+    """Upsert OTP record for (email, type). Replaces any existing one."""
+    now = _now()
+    doc = {
+        "email": email,
+        "type": otp_type,
+        "code_hash": _hash_code(code),
+        "attempts": 0,
+        "created_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=OTP_TTL_SECONDS)).isoformat(),
+        "last_sent_at": now.isoformat(),
+    }
+    await db.verification_codes.update_one(
+        {"email": email, "type": otp_type},
+        {"$set": doc},
+        upsert=True,
+    )
+
+
+# ============== AUTH MODELS ==============
+class SignupRequest(BaseModel):
+    email: EmailStr
+    password: str
+    display_name: Optional[str] = None
+
+
+class VerifyRequest(BaseModel):
+    email: EmailStr
+    code: str
+    type: Literal["signup", "recovery"] = "signup"
+
+
+class ResendRequest(BaseModel):
+    email: EmailStr
+    type: Literal["signup", "recovery"] = "signup"
+
+
+class ForgotRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetRequest(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str
+
+
 def grade_answer(question: Dict[str, Any], submission: AnswerSubmission) -> bool:
     if submission.skipped:
         return False
@@ -166,6 +325,180 @@ def grade_answer(question: Dict[str, Any], submission: AnswerSubmission) -> bool
 @api_router.get("/")
 async def root():
     return {"message": "RLIQ API online"}
+
+
+# ---- Custom OTP auth endpoints (Brevo email) ----
+@api_router.post("/auth/signup")
+async def auth_signup(payload: SignupRequest):
+    email = _norm_email(payload.email)
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    existing = await _find_supa_user_by_email(email)
+    if existing:
+        if existing.get("email_confirmed_at"):
+            raise HTTPException(status_code=409, detail="An account with this email already exists. Please sign in.")
+        # Unverified account exists — update password + metadata, resend OTP
+        r = await _supa_admin(
+            "PUT",
+            f"/auth/v1/admin/users/{existing['id']}",
+            json={
+                "password": payload.password,
+                "user_metadata": {"display_name": payload.display_name or email.split("@")[0]},
+            },
+        )
+        if r.status_code >= 300:
+            logging.getLogger(__name__).error("Supabase update user failed: %s", r.text)
+            raise HTTPException(status_code=502, detail="Could not update account")
+    else:
+        r = await _supa_admin(
+            "POST",
+            "/auth/v1/admin/users",
+            json={
+                "email": email,
+                "password": payload.password,
+                "email_confirm": False,
+                "user_metadata": {"display_name": payload.display_name or email.split("@")[0]},
+            },
+        )
+        if r.status_code >= 300:
+            logging.getLogger(__name__).error("Supabase create user failed: %s", r.text)
+            raise HTTPException(status_code=502, detail="Could not create account")
+
+    code = _gen_code()
+    await _store_otp(email, "signup", code)
+    await _send_otp_email(email, code, "signup")
+    return {"ok": True, "message": "Verification code sent"}
+
+
+@api_router.post("/auth/verify-code")
+async def auth_verify_code(payload: VerifyRequest):
+    email = _norm_email(payload.email)
+    rec = await db.verification_codes.find_one({"email": email, "type": payload.type})
+    if not rec:
+        raise HTTPException(status_code=400, detail="No active code. Request a new one.")
+    if rec["attempts"] >= OTP_MAX_ATTEMPTS:
+        await db.verification_codes.delete_one({"_id": rec["_id"]})
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Request a new code.")
+    if datetime.fromisoformat(rec["expires_at"]) < _now():
+        await db.verification_codes.delete_one({"_id": rec["_id"]})
+        raise HTTPException(status_code=410, detail="Code expired. Request a new one.")
+
+    if not _verify_code(payload.code.strip(), rec["code_hash"]):
+        await db.verification_codes.update_one({"_id": rec["_id"]}, {"$inc": {"attempts": 1}})
+        remaining = OTP_MAX_ATTEMPTS - (rec["attempts"] + 1)
+        raise HTTPException(
+            status_code=401,
+            detail=f"Incorrect code. {max(0, remaining)} attempts remaining.",
+        )
+
+    # Successful verify
+    if payload.type == "signup":
+        user = await _find_supa_user_by_email(email)
+        if not user:
+            raise HTTPException(status_code=404, detail="Account not found")
+        r = await _supa_admin(
+            "PUT",
+            f"/auth/v1/admin/users/{user['id']}",
+            json={"email_confirm": True},
+        )
+        if r.status_code >= 300:
+            logging.getLogger(__name__).error("Supabase confirm email failed: %s", r.text)
+            raise HTTPException(status_code=502, detail="Could not confirm email")
+        await db.verification_codes.delete_one({"_id": rec["_id"]})
+        return {"ok": True, "verified": True}
+
+    # For recovery we keep the record around briefly so /auth/reset-password can re-verify.
+    # Mark verified by extending TTL by 5 mins and zeroing attempts.
+    await db.verification_codes.update_one(
+        {"_id": rec["_id"]},
+        {
+            "$set": {
+                "verified": True,
+                "expires_at": (_now() + timedelta(minutes=5)).isoformat(),
+                "attempts": 0,
+            }
+        },
+    )
+    return {"ok": True, "verified": True}
+
+
+@api_router.post("/auth/resend-code")
+async def auth_resend_code(payload: ResendRequest):
+    email = _norm_email(payload.email)
+    existing = await db.verification_codes.find_one({"email": email, "type": payload.type})
+    if existing:
+        last = datetime.fromisoformat(existing["last_sent_at"])
+        elapsed = (_now() - last).total_seconds()
+        if elapsed < OTP_RESEND_COOLDOWN:
+            wait = int(OTP_RESEND_COOLDOWN - elapsed)
+            raise HTTPException(status_code=429, detail=f"Please wait {wait}s before requesting another code.")
+
+    # Verify the user actually exists for this purpose
+    user = await _find_supa_user_by_email(email)
+    if payload.type == "signup":
+        if not user:
+            raise HTTPException(status_code=404, detail="No pending signup for this email")
+        if user.get("email_confirmed_at"):
+            raise HTTPException(status_code=409, detail="Email already verified. Sign in instead.")
+    else:  # recovery
+        if not user:
+            # Don't leak existence — return ok silently
+            return {"ok": True}
+
+    code = _gen_code()
+    await _store_otp(email, payload.type, code)
+    await _send_otp_email(email, code, payload.type)
+    return {"ok": True}
+
+
+@api_router.post("/auth/forgot-password")
+async def auth_forgot_password(payload: ForgotRequest):
+    email = _norm_email(payload.email)
+    user = await _find_supa_user_by_email(email)
+    # Do not leak whether the email exists
+    if user:
+        code = _gen_code()
+        await _store_otp(email, "recovery", code)
+        await _send_otp_email(email, code, "recovery")
+    return {"ok": True, "message": "If that email is registered, a code has been sent."}
+
+
+@api_router.post("/auth/reset-password")
+async def auth_reset_password(payload: ResetRequest):
+    email = _norm_email(payload.email)
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    rec = await db.verification_codes.find_one({"email": email, "type": "recovery"})
+    if not rec:
+        raise HTTPException(status_code=400, detail="No active code. Request a new one.")
+    if datetime.fromisoformat(rec["expires_at"]) < _now():
+        await db.verification_codes.delete_one({"_id": rec["_id"]})
+        raise HTTPException(status_code=410, detail="Code expired. Request a new one.")
+    if rec["attempts"] >= OTP_MAX_ATTEMPTS:
+        await db.verification_codes.delete_one({"_id": rec["_id"]})
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Request a new code.")
+    if not _verify_code(payload.code.strip(), rec["code_hash"]):
+        await db.verification_codes.update_one({"_id": rec["_id"]}, {"$inc": {"attempts": 1}})
+        remaining = OTP_MAX_ATTEMPTS - (rec["attempts"] + 1)
+        raise HTTPException(status_code=401, detail=f"Incorrect code. {max(0, remaining)} attempts remaining.")
+
+    user = await _find_supa_user_by_email(email)
+    if not user:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    r = await _supa_admin(
+        "PUT",
+        f"/auth/v1/admin/users/{user['id']}",
+        json={"password": payload.new_password, "email_confirm": True},
+    )
+    if r.status_code >= 300:
+        logging.getLogger(__name__).error("Supabase password update failed: %s", r.text)
+        raise HTTPException(status_code=502, detail="Could not update password")
+
+    await db.verification_codes.delete_one({"_id": rec["_id"]})
+    return {"ok": True}
 
 
 @api_router.get("/me")

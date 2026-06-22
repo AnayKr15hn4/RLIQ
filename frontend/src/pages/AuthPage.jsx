@@ -1,10 +1,19 @@
 import React, { useState } from "react";
 import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { publicApi } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Rocket, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
+
+function extractError(err, fallback) {
+  return (
+    err?.response?.data?.detail ||
+    (err && typeof err === "object" && typeof err.message === "string" && err.message) ||
+    fallback
+  );
+}
 
 export default function AuthPage() {
   const [params] = useSearchParams();
@@ -14,7 +23,7 @@ export default function AuthPage() {
   const [displayName, setDisplayName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const { signIn, signUp } = useAuth();
+  const { signIn } = useAuth();
   const navigate = useNavigate();
 
   const submit = async (e) => {
@@ -28,23 +37,16 @@ export default function AuthPage() {
         toast.success("Welcome back. Boost up.");
         navigate("/dashboard");
       } else {
-        const { data, error } = await signUp(email, password, displayName || email.split("@")[0]);
-        if (error) throw error;
-        if (data.session) {
-          toast.success("Account ready. Let's roll.");
-          navigate("/dashboard");
-        } else {
-          toast.success("Verification code sent — check your email.");
-          navigate("/verify-email", { state: { email } });
-        }
+        await publicApi.post("/auth/signup", {
+          email,
+          password,
+          display_name: displayName || email.split("@")[0],
+        });
+        toast.success("Verification code sent — check your email.");
+        navigate("/verify-email", { state: { email, password } });
       }
     } catch (err) {
-      const msg =
-        (err && typeof err === "object" && typeof err.message === "string" && err.message) ||
-        (err && err.error_description) ||
-        (typeof err === "string" ? err : null) ||
-        "Authentication failed";
-      setError(msg);
+      setError(extractError(err, "Authentication failed"));
     } finally {
       setLoading(false);
     }
@@ -123,7 +125,7 @@ export default function AuthPage() {
               data-testid="auth-error-message"
             >
               <AlertCircle className="w-4 h-4 mt-0.5" />
-              <span>{error}</span>
+              <span>{String(error)}</span>
             </div>
           )}
 

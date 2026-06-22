@@ -1,12 +1,19 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { useAuth } from "@/context/AuthContext";
+import { publicApi } from "@/lib/api";
 import { AuthShell } from "@/components/AuthShared";
 import { AlertCircle, KeyRound } from "lucide-react";
 
+function extractError(err, fallback) {
+  return (
+    err?.response?.data?.detail ||
+    (err && typeof err === "object" && typeof err.message === "string" && err.message) ||
+    fallback
+  );
+}
+
 export default function ForgotPassword() {
   const navigate = useNavigate();
-  const { sendRecoveryOtp } = useAuth();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -16,11 +23,10 @@ export default function ForgotPassword() {
     setError(null);
     setLoading(true);
     try {
-      const { error } = await sendRecoveryOtp(email);
-      if (error) throw error;
+      await publicApi.post("/auth/forgot-password", { email });
       navigate("/reset-password", { state: { email } });
     } catch (err) {
-      setError(err?.message || "Could not send recovery code");
+      setError(extractError(err, "Could not send recovery code"));
     } finally {
       setLoading(false);
     }
@@ -47,7 +53,7 @@ export default function ForgotPassword() {
             data-testid="forgot-error"
           >
             <AlertCircle className="w-4 h-4 mt-0.5" />
-            <span>{error}</span>
+            <span>{String(error)}</span>
           </div>
         )}
         <button
