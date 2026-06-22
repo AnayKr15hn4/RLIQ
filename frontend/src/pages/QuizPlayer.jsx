@@ -138,13 +138,22 @@ export default function QuizPlayer() {
     try { playerRef.current?.setPlaybackRate(SPEEDS[next]); } catch {}
   };
   const fullscreen = () => {
-    const el = document.getElementById("rl-video-wrap");
-    if (el?.requestFullscreen) el.requestFullscreen();
+    const el = document.getElementById("rl-fs-wrap");
+    if (!document.fullscreenElement && el?.requestFullscreen) el.requestFullscreen();
+    else if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();
   };
   const seekTo = (sec) => {
     const target = Math.min(barrier, Math.max(0, sec));
     try { playerRef.current?.seekTo(target, true); } catch {}
   };
+
+  // Detect fullscreen state changes
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    return () => document.removeEventListener("fullscreenchange", handler);
+  }, []);
 
   // ====== Answer flow ======
   const submitAnswer = (sub, skipped = false) => {
@@ -218,7 +227,22 @@ export default function QuizPlayer() {
         <div className="grid lg:grid-cols-12 gap-6">
           {/* LEFT: Video + custom controls */}
           <div className="lg:col-span-7">
-            <div id="rl-video-wrap" className="relative aspect-video bg-black border border-white/10" data-testid="quiz-video-container">
+            <div
+              id="rl-fs-wrap"
+              className={`relative bg-black ${isFullscreen ? "w-screen h-screen flex items-center" : ""}`}
+              data-testid="rl-fs-wrap"
+            >
+              <div
+                id="rl-video-wrap"
+                className={`relative bg-black border border-white/10 ${
+                  isFullscreen
+                    ? activeQ || feedback
+                      ? "w-[calc(100%-420px)] h-full"
+                      : "w-full h-full"
+                    : "aspect-video"
+                }`}
+                data-testid="quiz-video-container"
+              >
               <YouTube
                 videoId={quiz.video_id}
                 opts={{
@@ -241,6 +265,27 @@ export default function QuizPlayer() {
               />
               {/* Block any direct interaction with the YouTube iframe */}
               <div className="absolute inset-0" onClick={togglePlay} data-testid="video-click-shield" />
+              </div>
+
+              {/* Fullscreen-only slide-in sidebar */}
+              {isFullscreen && (activeQ || feedback) && (
+                <div
+                  className="absolute top-0 right-0 h-full w-[420px] bg-[#0a0a0a] border-l border-white/10 overflow-y-auto p-6 hud-in"
+                  data-testid="fs-sidebar"
+                >
+                  {feedback ? (
+                    <FeedbackPanel feedback={feedback} onContinue={continueAfterFeedback} />
+                  ) : (
+                    <QuestionPanel
+                      key={activeQ.id}
+                      q={activeQ}
+                      onSubmit={(sub) => submitAnswer(sub)}
+                      onSkip={() => submitAnswer({}, true)}
+                      onRewatch={rewatch10}
+                    />
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Custom controls */}
