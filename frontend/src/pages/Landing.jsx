@@ -198,7 +198,7 @@ export default function Landing() {
       </section>
 
       <footer className="border-t border-white/5 py-8 text-center text-xs text-zinc-600 font-mono-rl tracking-widest">
-        ROCKETSENSE // RULE #99: BUILT BY PLAYERS, FOR PLAYERS.
+        RLIQ // RULE #99: BUILT BY PLAYERS, FOR PLAYERS.
       </footer>
     </div>
   );

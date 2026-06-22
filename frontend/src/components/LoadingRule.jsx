@@ -35,7 +35,7 @@ export default function LoadingRule({ label = "Loading" }) {
       <div className="absolute inset-0 scanline" />
       <div className="relative text-center px-6 max-w-2xl">
         <div className="font-mono-rl text-xs tracking-[0.35em] text-[#ff6b00] mb-4">
-          ROCKETSENSE // RULE BOOK
+          RLIQ // RULE BOOK
         </div>
         <div
           className="font-display font-black uppercase text-white text-5xl sm:text-6xl lg:text-7xl text-glow-orange leading-none"

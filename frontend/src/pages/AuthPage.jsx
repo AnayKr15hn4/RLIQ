@@ -39,7 +39,12 @@ export default function AuthPage() {
         }
       }
     } catch (err) {
-      setError(err.message ?? "Authentication failed");
+      const msg =
+        (err && typeof err === "object" && typeof err.message === "string" && err.message) ||
+        (err && err.error_description) ||
+        (typeof err === "string" ? err : null) ||
+        "Authentication failed";
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -54,7 +59,7 @@ export default function AuthPage() {
             <Rocket className="w-5 h-5 text-black" strokeWidth={2.5} />
           </div>
           <div className="font-display font-black uppercase">
-            Rocket<span className="text-[#ff6b00]">Sense</span>
+            RL<span className="text-[#ff6b00]">IQ</span>
           </div>
         </Link>
       </div>

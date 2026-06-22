@@ -11,7 +11,7 @@ API = f"{BASE_URL}/api"
 def test_root():
     r = requests.get(f"{API}/", timeout=15)
     assert r.status_code == 200
-    assert r.json().get("message") == "RL Quiz API online"
+    assert r.json().get("message") == "RLIQ API online"
 
 
 # Public listing works without auth

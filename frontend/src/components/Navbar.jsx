@@ -19,7 +19,7 @@ export default function Navbar() {
             <Rocket className="w-5 h-5 text-black" strokeWidth={2.5} />
           </div>
           <div className="font-display font-black text-xl uppercase tracking-tight">
-            Rocket<span className="text-[#ff6b00]">Sense</span>
+            RL<span className="text-[#ff6b00]">IQ</span>
           </div>
         </Link>
         <nav className="flex items-center gap-3">

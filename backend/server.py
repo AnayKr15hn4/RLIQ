@@ -24,7 +24,7 @@ db = client[os.environ['DB_NAME']]
 SUPABASE_URL = os.environ['SUPABASE_URL']
 SUPABASE_ANON_KEY = os.environ['SUPABASE_ANON_KEY']
 
-app = FastAPI(title="Rocket League Quiz API")
+app = FastAPI(title="RLIQ Quiz API")
 api_router = APIRouter(prefix="/api")
 
 http_bearer = HTTPBearer(auto_error=False)
@@ -165,7 +165,7 @@ def grade_answer(question: Dict[str, Any], submission: AnswerSubmission) -> bool
 # ============== ROUTES ==============
 @api_router.get("/")
 async def root():
-    return {"message": "RL Quiz API online"}
+    return {"message": "RLIQ API online"}
 
 
 @api_router.get("/me")
