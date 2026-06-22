@@ -9,6 +9,9 @@ import Dashboard from "@/pages/Dashboard";
 import QuizBuilder from "@/pages/QuizBuilder";
 import QuizPlayer from "@/pages/QuizPlayer";
 import Results from "@/pages/Results";
+import VerifyEmail from "@/pages/VerifyEmail";
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
 import LoadingRule from "@/components/LoadingRule";
 
 function PrivateRoute({ children }) {
@@ -26,6 +29,9 @@ function App() {
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/auth" element={<AuthPage />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route
               path="/dashboard"
               element={

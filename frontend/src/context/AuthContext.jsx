@@ -30,10 +30,27 @@ export function AuthProvider({ children }) {
       password,
       options: { data: { display_name } },
     });
+  const verifyOtp = (email, token, type = "signup") =>
+    supabase.auth.verifyOtp({ email, token, type });
+  const resendSignupOtp = (email) =>
+    supabase.auth.resend({ type: "signup", email });
+  const sendRecoveryOtp = (email) =>
+    supabase.auth.resetPasswordForEmail(email);
+  const verifyRecoveryOtp = (email, token) =>
+    supabase.auth.verifyOtp({ email, token, type: "recovery" });
+  const updatePassword = (password) =>
+    supabase.auth.updateUser({ password });
   const signOut = () => supabase.auth.signOut();
 
   return (
-    <AuthCtx.Provider value={{ user, session, loading, signIn, signUp, signOut }}>
+    <AuthCtx.Provider
+      value={{
+        user, session, loading,
+        signIn, signUp, signOut,
+        verifyOtp, resendSignupOtp,
+        sendRecoveryOtp, verifyRecoveryOtp, updatePassword,
+      }}
+    >
       {children}
     </AuthCtx.Provider>
   );

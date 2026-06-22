@@ -34,8 +34,8 @@ export default function AuthPage() {
           toast.success("Account ready. Let's roll.");
           navigate("/dashboard");
         } else {
-          toast.success("Check your email to confirm — or sign in if confirm is off.");
-          setMode("signin");
+          toast.success("Verification code sent — check your email.");
+          navigate("/verify-email", { state: { email } });
         }
       }
     } catch (err) {
@@ -136,6 +136,18 @@ export default function AuthPage() {
             {loading ? "Loading..." : mode === "signin" ? "Sign In" : "Create Account"}
           </button>
         </form>
+
+        {mode === "signin" && (
+          <div className="mt-4 text-center">
+            <Link
+              to="/forgot-password"
+              className="font-mono-rl text-xs text-zinc-500 hover:text-[#007aff] tracking-widest"
+              data-testid="auth-forgot-password-link"
+            >
+              // FORGOT PASSWORD?
+            </Link>
+          </div>
+        )}
 
         <button
           type="button"
