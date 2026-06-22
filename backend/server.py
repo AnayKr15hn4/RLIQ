@@ -426,6 +426,13 @@ async def auth_verify_code(payload: VerifyRequest):
 @api_router.post("/auth/resend-code")
 async def auth_resend_code(payload: ResendRequest):
     email = _norm_email(payload.email)
+
+    # For recovery, never leak existence — always return ok if user is unknown,
+    # before any cooldown / DB lookup so timing is consistent.
+    user = await _find_supa_user_by_email(email)
+    if payload.type == "recovery" and not user:
+        return {"ok": True}
+
     existing = await db.verification_codes.find_one({"email": email, "type": payload.type})
     if existing:
         last = datetime.fromisoformat(existing["last_sent_at"])
@@ -434,17 +441,11 @@ async def auth_resend_code(payload: ResendRequest):
             wait = int(OTP_RESEND_COOLDOWN - elapsed)
             raise HTTPException(status_code=429, detail=f"Please wait {wait}s before requesting another code.")
 
-    # Verify the user actually exists for this purpose
-    user = await _find_supa_user_by_email(email)
     if payload.type == "signup":
         if not user:
             raise HTTPException(status_code=404, detail="No pending signup for this email")
         if user.get("email_confirmed_at"):
             raise HTTPException(status_code=409, detail="Email already verified. Sign in instead.")
-    else:  # recovery
-        if not user:
-            # Don't leak existence — return ok silently
-            return {"ok": True}
 
     code = _gen_code()
     await _store_otp(email, payload.type, code)
