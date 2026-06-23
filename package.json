@@ -3,5 +3,13 @@
   "private": true,
   "engines": {
     "node": "20.x"
+  },
+  "overrides": {
+    "ajv": "^8.13.0",
+    "ajv-keywords": "^5.1.0"
+  },
+  "resolutions": {
+    "ajv": "^8.13.0",
+    "ajv-keywords": "^5.1.0"
   }
 }
