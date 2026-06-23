@@ -18,17 +18,23 @@ export default function Results() {
     (async () => {
       try {
         const cli = await api();
-        const [a, q, lb] = await Promise.all([
+        const [a, q] = await Promise.all([
           cli.get(`/attempts/${attemptId}`),
           publicApi.get(`/quizzes/${id}`),
-          publicApi.get(`/quizzes/${id}/leaderboard?limit=10`),
         ]);
         q.data.questions = (q.data.questions || []).slice().sort((x, y) => x.timestamp - y.timestamp);
         setAttempt(a.data);
         setQuiz(q.data);
-        setLeaderboard(lb.data);
       } finally {
         setLoading(false);
+      }
+      // Leaderboard is non-blocking — if the quiz was deleted or has no attempts,
+      // we just skip rendering the widget.
+      try {
+        const lb = await publicApi.get(`/quizzes/${id}/leaderboard?limit=10`);
+        setLeaderboard(lb.data);
+      } catch {
+        setLeaderboard(null);
       }
     })();
   }, [id, attemptId]);

@@ -43,9 +43,9 @@ const RANKS = [
 ];
 
 const GAME_MODES = [
-  { v: "duel", l: "1v1 Duel", short: "1s" },
-  { v: "doubles", l: "2v2 Doubles", short: "2s" },
-  { v: "standard", l: "3v3 Standard", short: "3s" },
+  { v: "duel", l: "1v1 Duel", short: "1S" },
+  { v: "doubles", l: "2v2 Doubles", short: "2S" },
+  { v: "standard", l: "3v3 Standard", short: "3S" },
   { v: "hoops", l: "Hoops", short: "HOOPS" },
   { v: "snowday", l: "Snowday", short: "SNOW" },
   { v: "rumble", l: "Rumble", short: "RUMBLE" },
