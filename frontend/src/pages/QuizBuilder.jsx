@@ -139,10 +139,19 @@ export default function QuizBuilder({ edit }) {
     if (!title.trim()) return toast.error("Title is required");
     if (!videoId) return toast.error("Valid YouTube URL required");
     if (questions.length === 0) return toast.error("Add at least one question");
+    if (maxRank < minRank) return toast.error("Max rank must be ≥ min rank");
     setSaving(true);
     try {
       const cli = await api();
-      const payload = { title, description, youtube_url: youtubeUrl, difficulty, questions };
+      const payload = {
+        title,
+        description,
+        youtube_url: youtubeUrl,
+        min_rank: minRank,
+        max_rank: maxRank,
+        duration_seconds: duration,
+        questions,
+      };
       if (edit) {
         await cli.put(`/quizzes/${id}`, payload);
         toast.success("Quiz updated");
