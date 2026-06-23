@@ -5,11 +5,11 @@
     "node": "20.x"
   },
   "overrides": {
-    "ajv": "^8.13.0",
-    "ajv-keywords": "^5.1.0"
+    "ajv": "^6.12.6",
+    "ajv-keywords": "^3.5.2"
   },
   "resolutions": {
-    "ajv": "^8.13.0",
-    "ajv-keywords": "^5.1.0"
+    "ajv": "^6.12.6",
+    "ajv-keywords": "^3.5.2"
   }
 }
