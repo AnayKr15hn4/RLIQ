@@ -35,6 +35,17 @@ const TYPES = [
   { v: "short", l: "Short Explanation" },
 ];
 
+const RANKS = [
+  { v: 1, l: "Bronze", c: "#a06b3b" },
+  { v: 2, l: "Silver", c: "#c0c0c0" },
+  { v: 3, l: "Gold", c: "#e6c200" },
+  { v: 4, l: "Platinum", c: "#9cd9d9" },
+  { v: 5, l: "Diamond", c: "#69b8ff" },
+  { v: 6, l: "Champion", c: "#9b6cff" },
+  { v: 7, l: "Grand Champion", c: "#ff4757" },
+  { v: 8, l: "Supersonic Legend", c: "#ffffff" },
+];
+
 const uid = () => Math.random().toString(36).slice(2, 11);
 
 export default function QuizBuilder({ edit }) {
@@ -45,7 +56,9 @@ export default function QuizBuilder({ edit }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [youtubeUrl, setYoutubeUrl] = useState("");
-  const [difficulty, setDifficulty] = useState("rookie");
+  const [minRank, setMinRank] = useState(1);
+  const [maxRank, setMaxRank] = useState(8);
+  const [duration, setDuration] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [editingIdx, setEditingIdx] = useState(null);
 
@@ -62,7 +75,9 @@ export default function QuizBuilder({ edit }) {
         setTitle(data.title);
         setDescription(data.description || "");
         setYoutubeUrl(data.youtube_url);
-        setDifficulty(data.difficulty);
+        setMinRank(data.min_rank ?? 1);
+        setMaxRank(data.max_rank ?? 8);
+        setDuration(data.duration_seconds ?? null);
         setQuestions(data.questions || []);
       } catch (e) {
         toast.error("Failed to load quiz");
@@ -88,7 +103,13 @@ export default function QuizBuilder({ edit }) {
     return () => clearInterval(t);
   }, []);
 
-  const onReady = (e) => (playerRef.current = e.target);
+  const onReady = (e) => {
+    playerRef.current = e.target;
+    try {
+      const d = e.target.getDuration() || 0;
+      if (d) setDuration(d);
+    } catch {}
+  };
 
   const addQuestion = () => {
     const newQ = {
@@ -222,20 +243,45 @@ export default function QuizBuilder({ edit }) {
                 />
               </div>
               <div>
-                <Label className="font-mono-rl text-[10px] tracking-widest text-zinc-400">DIFFICULTY</Label>
-                <Select value={difficulty} onValueChange={setDifficulty}>
-                  <SelectTrigger
-                    className="bg-zinc-950 border-white/10 rounded-none mt-1"
-                    data-testid="builder-difficulty-select"
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#0a0a0a] border-white/10 rounded-none">
-                    <SelectItem value="rookie">Rookie</SelectItem>
-                    <SelectItem value="all-star">All-Star</SelectItem>
-                    <SelectItem value="grand-champ">Grand Champion</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label className="font-mono-rl text-[10px] tracking-widest text-zinc-400">
+                  TARGET RANK RANGE
+                </Label>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <Select value={String(minRank)} onValueChange={(v) => setMinRank(parseInt(v))}>
+                    <SelectTrigger
+                      className="bg-zinc-950 border-white/10 rounded-none"
+                      data-testid="builder-min-rank-select"
+                    >
+                      <SelectValue placeholder="Min" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#0a0a0a] border-white/10 rounded-none">
+                      {RANKS.map((r) => (
+                        <SelectItem key={r.v} value={String(r.v)}>
+                          {r.l}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={String(maxRank)} onValueChange={(v) => setMaxRank(parseInt(v))}>
+                    <SelectTrigger
+                      className="bg-zinc-950 border-white/10 rounded-none"
+                      data-testid="builder-max-rank-select"
+                    >
+                      <SelectValue placeholder="Max" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#0a0a0a] border-white/10 rounded-none">
+                      {RANKS.map((r) => (
+                        <SelectItem key={r.v} value={String(r.v)}>
+                          {r.l}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="font-mono-rl text-[10px] text-zinc-500 mt-2">
+                  // {RANKS.find((r) => r.v === minRank)?.l.toUpperCase()} → {RANKS.find((r) => r.v === maxRank)?.l.toUpperCase()}
+                  {duration ? ` · ${formatTime(duration)} VIDEO` : ""}
+                </div>
               </div>
             </div>
           </div>
@@ -294,11 +340,23 @@ function QuestionEditor({ q, idx, open, onOpen, onChange, onRemove, onSeek }) {
       correct: q.correct.filter((c) => c !== i).map((c) => (c > i ? c - 1 : c)),
     });
   const toggleCorrect = (i) => {
-    if (q.type === "single") return onChange({ correct: [i] });
+    const optionText = (q.options[i] || "").trim();
+    const explanationStarter = optionText
+      ? `"${optionText}" is correct because `
+      : "";
+    // Auto-seed the explanation when the explanation is empty so the creator
+    // can fill in the *why* without having to type the boilerplate.
+    const explanationPatch =
+      !q.explanation && optionText ? { explanation: explanationStarter } : {};
+    if (q.type === "single") return onChange({ correct: [i], ...explanationPatch });
     if (q.type === "multi") {
       const s = new Set(q.correct);
-      s.has(i) ? s.delete(i) : s.add(i);
-      return onChange({ correct: Array.from(s).sort() });
+      const wasIn = s.has(i);
+      wasIn ? s.delete(i) : s.add(i);
+      const patch = { correct: Array.from(s).sort() };
+      // Only seed explanation when ADDING a correct option, not when removing
+      if (!wasIn) Object.assign(patch, explanationPatch);
+      return onChange(patch);
     }
   };
   const moveRank = (i, dir) => {

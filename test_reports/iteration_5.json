@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 5 (advanced filters, favorites, hydrated history, rank-range builder, auto-fill explanation) — 16/16 backend pytest PASS. Frontend E2E mostly PASS but **ONE CRITICAL BUG**: Quiz save is completely broken in /quizzes/new — clicking Save shows 'Save failed' toast. Root cause: QuizBuilder.jsx line 145 still references undefined variable `difficulty` (removed from component state) in the POST payload. Auto-fill explanation feature verified perfectly (correct quote inserted, never overwrites existing). All other UI flows verified: 4 tabs, search debounce, filter overlap, favorite star toggle, history rows, builder rank selects, duration capture (helper text '· 3:34 VIDEO' shown).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "QuizBuilder.jsx (save())",
+        "issue": "ReferenceError: `difficulty` is not defined. Line 145 builds payload `{ title, description, youtube_url: youtubeUrl, difficulty, questions }` but `difficulty` was removed from component state (replaced by minRank/maxRank/duration). Save throws → catch shows 'Save failed' toast. **Quiz creation is COMPLETELY BLOCKED via UI.** Also payload omits `min_rank`, `max_rank`, `duration_seconds` so even if `difficulty` were defined, those new fields would never reach the backend from the UI.",
+        "selector": "[data-testid=\"builder-save-button\"]",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Create Quiz",
+        "issue": "POST /api/quizzes from the builder never gets sent — JS error in save() before axios call. Backend works fine (verified directly via pytest), but the FE cannot create quizzes through the UI.",
+        "affected_selectors": ["[data-testid=\"builder-save-button\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_filters_favorites.py",
+    "/app/test_reports/pytest/iter5_results.xml"
+  ],
+  "action_items": [
+    "FIX QuizBuilder.jsx line 145: replace `difficulty` with `min_rank: minRank, max_rank: maxRank, duration_seconds: duration` in the payload. Current code: `const payload = { title, description, youtube_url: youtubeUrl, difficulty, questions };` → should be: `const payload = { title, description, youtube_url: youtubeUrl, min_rank: minRank, max_rank: maxRank, duration_seconds: duration, questions };`. Without this, ALL quiz creation through the UI fails."
+  ],
+  "critical_code_review_comments": [
+    "QuizBuilder.jsx line 145 — undefined `difficulty` reference, missing new fields in payload (see action_items). High severity.",
+    "Dashboard.jsx Tabs defaultValue=\"play\" but TabsTrigger for browse uses value=\"play\" — naming inconsistency. The testid is `tab-browse` but the internal Tab value is `play`. Harmless but confusing for maintenance.",
+    "server.py is at 805 lines — now over the 700-line threshold flagged last iteration. Should be split (auth router, quiz router, favorites router, attempts router).",
+    "list_quizzes duration_seconds filter: when only min_duration is set, the $gte query EXCLUDES legacy quizzes whose duration_seconds is null. That's correct behaviour but worth documenting — legacy quizzes will silently disappear from a duration-filtered view.",
+    "favorites GET endpoint: empty doc returns quizzes:[] but always issues find query — micro-optimisation acceptable. The `creators` aggregate is correct.",
+    "QuizBuilder.jsx onReady uses YT player getDuration which may return 0 right after onReady; the polling-based fallback isn't there. In practice it worked during testing (3:34 captured)."
+  ],
+  "updated_files": ["/app/backend/tests/test_filters_favorites.py"],
+  "success_rate": {"backend": "100% (16/16 pytest — filters x6 individual + combined, hydrated /me/attempts, favorites idempotency, all auth gates, legacy backfill)", "frontend": "~88% — all read flows + auto-explanation + favorites + history + duration capture + rank badges verified; CREATE quiz BLOCKED by save bug"},
+  "test_credentials": "creator@rocketsense.test / RocketTest123! (sign-in worked, redirected to /dashboard).",
+  "seed_data_creation": "Created 1 quiz `TEST_FilterTarget_RankRange` (min_rank=5,max_rank=8,duration=210.5) via backend test; deleted in fixture teardown. Also temporarily favorited+unfavorited it via E2E. Submitted 1 attempt during hydrated-attempts test — left in DB (intentional; history tab depends on having attempts). No FE-created quiz persisted since save is broken.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes QuizBuilder.jsx line 145, re-run the playwright flow in this report (sign in → /quizzes/new → fill YT URL/title → pin question → set 2 options → click question-correct-0-0 → set ranks Diamond/Grand Champion → Save → expect navigate to /dashboard and a new card with DIAMOND→GRAND CHAMPION badges in tab-mine). Backend tests in /app/backend/tests/test_filters_favorites.py exhaustively cover the new query params and favorites — these can be re-run to confirm no regression. Auto-fill explanation verified: clicking question-correct-0-0 inserts '\"<option text>\" is correct because ' iff explanation is empty; if creator already typed an explanation, marking another option correct does NOT overwrite (verified with custom text 'MY CUSTOM EXPLANATION' surviving an opt-1 correct click). Helper text under rank-range shows '· 3:34 VIDEO' after YT player reports duration.",
+  "rca of the issue": "QuizBuilder save bug RCA: previous iteration the component had a `difficulty` state variable. In iteration 5 it was replaced by min_rank, max_rank, duration_seconds state variables. The save() body (line 145) still references the old variable name. Because save() is only invoked on button-click (not at component mount), no compile-time error, no React warning, no error visible until the user actually tries to save. Then JS throws ReferenceError, the try/catch in save() catches it, axios call never fires, and we hit the catch branch which shows 'Save failed'. Fix is a one-line payload change in QuizBuilder.jsx line 145 (see action_items)."
+}

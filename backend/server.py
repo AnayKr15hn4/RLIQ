@@ -90,7 +90,10 @@ class QuizCreate(BaseModel):
     title: str
     description: str = ""
     youtube_url: str
-    difficulty: str = "rookie"  # rookie / all-star / grand-champ
+    difficulty: str = "rookie"  # legacy field, kept for backwards compat
+    min_rank: int = 1   # 1=Bronze … 8=Supersonic Legend
+    max_rank: int = 8
+    duration_seconds: Optional[float] = None
     questions: List[Question] = Field(default_factory=list)
 
 
@@ -527,13 +530,42 @@ async def create_quiz(payload: QuizCreate, user=Depends(get_current_user)):
 
 
 @api_router.get("/quizzes", response_model=List[Quiz])
-async def list_quizzes(mine: bool = False, user=Depends(get_optional_user)):
+async def list_quizzes(
+    mine: bool = False,
+    q: Optional[str] = None,
+    creator: Optional[str] = None,
+    min_rank: Optional[int] = None,
+    max_rank: Optional[int] = None,
+    min_duration: Optional[float] = None,
+    max_duration: Optional[float] = None,
+    user=Depends(get_optional_user),
+):
     query: Dict[str, Any] = {}
     if mine:
         if not user:
             raise HTTPException(status_code=401, detail="Auth required for 'mine'")
         query["creator_id"] = user["id"]
+    if q:
+        query["title"] = {"$regex": re.escape(q), "$options": "i"}
+    if creator:
+        query["creator_name"] = {"$regex": re.escape(creator), "$options": "i"}
+    # Rank-range overlap: quiz.max_rank >= filter.min_rank AND quiz.min_rank <= filter.max_rank
+    if min_rank is not None:
+        query["max_rank"] = {"$gte": min_rank}
+    if max_rank is not None:
+        query["min_rank"] = {"$lte": max_rank}
+    if min_duration is not None:
+        query["duration_seconds"] = query.get("duration_seconds", {})
+        query["duration_seconds"]["$gte"] = min_duration
+    if max_duration is not None:
+        query["duration_seconds"] = query.get("duration_seconds", {})
+        query["duration_seconds"]["$lte"] = max_duration
     docs = await db.quizzes.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # Backfill defaults on legacy docs so the response model validates
+    for d in docs:
+        d.setdefault("min_rank", 1)
+        d.setdefault("max_rank", 8)
+        d.setdefault("duration_seconds", None)
     return docs
 
 
@@ -542,6 +574,9 @@ async def get_quiz(quiz_id: str):
     doc = await db.quizzes.find_one({"id": quiz_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Quiz not found")
+    doc.setdefault("min_rank", 1)
+    doc.setdefault("max_rank", 8)
+    doc.setdefault("duration_seconds", None)
     return doc
 
 
@@ -621,12 +656,112 @@ async def get_attempt(attempt_id: str, user=Depends(get_current_user)):
     return doc
 
 
-@api_router.get("/me/attempts", response_model=List[Attempt])
+@api_router.get("/me/attempts")
 async def my_attempts(user=Depends(get_current_user)):
-    docs = await db.attempts.find(
+    """Return attempts joined with quiz title/video_id for the history tab."""
+    attempts = await db.attempts.find(
         {"user_id": user["id"]}, {"_id": 0}
     ).sort("created_at", -1).to_list(200)
-    return docs
+    quiz_ids = list({a["quiz_id"] for a in attempts})
+    quizzes = await db.quizzes.find(
+        {"id": {"$in": quiz_ids}}, {"_id": 0, "id": 1, "title": 1, "video_id": 1, "creator_name": 1}
+    ).to_list(len(quiz_ids))
+    quiz_map = {q["id"]: q for q in quizzes}
+    out = []
+    for a in attempts:
+        q = quiz_map.get(a["quiz_id"])
+        out.append({
+            "id": a["id"],
+            "quiz_id": a["quiz_id"],
+            "score": a["score"],
+            "correct_count": a["correct_count"],
+            "total_count": a["total_count"],
+            "created_at": a["created_at"],
+            "quiz_title": q["title"] if q else "(deleted quiz)",
+            "video_id": q["video_id"] if q else None,
+            "creator_name": q["creator_name"] if q else "",
+        })
+    return out
+
+
+# ============== FAVORITES ==============
+@api_router.get("/me/favorites")
+async def my_favorites(user=Depends(get_current_user)):
+    doc = await db.favorites.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    quiz_ids = doc.get("quiz_ids", [])
+    creator_ids = doc.get("creator_ids", [])
+    # Fetch full quiz docs for favorited quizzes
+    quizzes = []
+    if quiz_ids:
+        quizzes = await db.quizzes.find({"id": {"$in": quiz_ids}}, {"_id": 0}).to_list(200)
+        for d in quizzes:
+            d.setdefault("min_rank", 1)
+            d.setdefault("max_rank", 8)
+            d.setdefault("duration_seconds", None)
+    # Aggregate creator info (just id + name + quiz count) from quizzes collection
+    creators = []
+    if creator_ids:
+        pipeline = [
+            {"$match": {"creator_id": {"$in": creator_ids}}},
+            {"$group": {
+                "_id": "$creator_id",
+                "creator_name": {"$first": "$creator_name"},
+                "quiz_count": {"$sum": 1},
+            }},
+        ]
+        async for c in db.quizzes.aggregate(pipeline):
+            creators.append({
+                "creator_id": c["_id"],
+                "creator_name": c["creator_name"],
+                "quiz_count": c["quiz_count"],
+            })
+    return {
+        "quiz_ids": quiz_ids,
+        "creator_ids": creator_ids,
+        "quizzes": quizzes,
+        "creators": creators,
+    }
+
+
+@api_router.post("/me/favorites/quizzes/{quiz_id}")
+async def favorite_quiz(quiz_id: str, user=Depends(get_current_user)):
+    q = await db.quizzes.find_one({"id": quiz_id})
+    if not q:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    await db.favorites.update_one(
+        {"user_id": user["id"]},
+        {"$addToSet": {"quiz_ids": quiz_id}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api_router.delete("/me/favorites/quizzes/{quiz_id}")
+async def unfavorite_quiz(quiz_id: str, user=Depends(get_current_user)):
+    await db.favorites.update_one(
+        {"user_id": user["id"]},
+        {"$pull": {"quiz_ids": quiz_id}},
+    )
+    return {"ok": True}
+
+
+@api_router.post("/me/favorites/creators/{creator_id}")
+async def favorite_creator(creator_id: str, user=Depends(get_current_user)):
+    await db.favorites.update_one(
+        {"user_id": user["id"]},
+        {"$addToSet": {"creator_ids": creator_id}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api_router.delete("/me/favorites/creators/{creator_id}")
+async def unfavorite_creator(creator_id: str, user=Depends(get_current_user)):
+    await db.favorites.update_one(
+        {"user_id": user["id"]},
+        {"$pull": {"creator_ids": creator_id}},
+    )
+    return {"ok": True}
 
 
 @api_router.get("/me/stats")
