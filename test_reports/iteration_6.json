@@ -1,0 +1,60 @@
+{
+  "summary": "Iteration 6 (game_mode filter, drafts, leaderboard, mobile QuizPlayer). Backend: 18/18 new pytest PASS + 16/16 regression PASS = 34/34. Frontend: All 9 game-mode chips render and filter correctly (filter-mode-* testids), quiz-mode-<id> tags render on cards, leaderboard widget renders with proper // YOU highlight + colored top ranks, mobile QuizPlayer collapses to single column (342px) at 390px viewport. QuizBuilder testids (builder-game-mode-select, builder-draft-toggle) present in source. Found ONE Results-page UX bug: Promise.all kills entire render if any of 3 requests 404s (stuck on loading) — reproducible by clicking history entry for a deleted quiz.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Results.jsx (lines 21-29)",
+        "issue": "Promise.all of [attempt, quiz, leaderboard] requests will reject the whole chain if ANY single request 404s. setLoading(false) runs in finally but attempt/quiz stay null → page renders LoadingRule forever AND a global axios error toast surfaces ('Uncaught runtime errors: Request failed with status code 404'). Repro: open History tab, click any entry whose quiz has been deleted — the /quizzes/{id} and /quizzes/{id}/leaderboard both 404. Recommend Promise.allSettled or a dedicated try/catch around the leaderboard fetch so it degrades gracefully.",
+        "selector": "[data-testid=\"results-leaderboard\"]",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Dashboard.jsx GAME_MODES (lines 46-54)",
+        "issue": "Mixed case short labels. Modes 1s/2s/3s use lowercase 's' while hoops/snowday/etc use UPPERCASE (HOOPS, SNOW, RUMBLE, DROP, TOURN, OTHER). Spec asked for '3S', '1S' uppercase. Cosmetic inconsistency on quiz-mode tags. Either uppercase all (3S/2S/1S) or wrap with CSS `text-transform: uppercase`.",
+        "selector": "[data-testid^=\"quiz-mode-\"]",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Results page",
+        "issues": ["Leaderboard widget renders correctly when all requests succeed: orange tint + '// YOU' label on current user row, #1 in gold color. Visually approved."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_gamemode_drafts_leaderboard.py",
+    "/app/backend/tests/test_filters_favorites.py",
+    "/app/test_reports/pytest/iter6_results.xml"
+  ],
+  "action_items": [
+    "Replace Promise.all with Promise.allSettled in Results.jsx (lines 21-25) so a missing leaderboard or deleted quiz does not blank the entire results page. Or wrap the leaderboard fetch in a separate useEffect with its own try/catch.",
+    "Decide on game-mode short label casing: either keep them all uppercase ('3S','2S','1S','HOOPS'…) OR rely on CSS uppercase on the quiz-mode tag. Currently mixed case looks inconsistent ('3s' vs 'HOOPS')."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 862 lines (was 805) — well above the 700-line threshold. Should be split into routers (auth/quiz/attempt/favorites/otp). list_quizzes alone is 50 lines with 8 conditional branches.",
+    "list_quizzes builds query['$or'] for draft-hiding but this $or branch silently overwrites itself if the caller also wants $or for something else later. OK for now but is a footgun.",
+    "leaderboard endpoint sets default limit=25 but request asks 'caps at 100' — capped correctly via min(max(limit,1),100). Good.",
+    "Results.jsx Promise.all bug (see ui_bugs) — silently kills the page on any 404. The previously-existing 'history entry to deleted quiz' issue is now a hard render failure instead of a soft 'quiz not found'.",
+    "Dashboard.jsx mode labels mixed case (see ui_bugs).",
+    "QuizBuilder confirms builder-game-mode-select + builder-draft-toggle testids exist (lines 317, 340). Not E2E-clicked this iteration; relying on backend persistence tests + visual inspection from iteration 5 context note."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_gamemode_drafts_leaderboard.py"
+  ],
+  "success_rate": {
+    "backend": "100% (18/18 new + 16/16 regression)",
+    "frontend": "~92% — all 9 game-mode chips functional, filter narrows, quiz-mode tags render, leaderboard renders properly with // YOU highlight + top-rank colors, mobile QuizPlayer collapses to single column. Two minor issues: Results.jsx Promise.all + mixed-case mode labels."
+  },
+  "test_credentials": "creator@rocketsense.test / RocketTest123!. player@rocketsense.test / RocketTest123! also used for cross-user draft visibility tests.",
+  "seed_data_creation": "Created two test quizzes via backend pytest fixtures: TEST_HoopsQuiz_GameMode (game_mode=hoops) and TEST_DraftQuiz_HiddenFromBrowse (game_mode=duel, is_draft=true). Both auto-deleted in fixture teardown. Two attempts persisted on the hoops quiz during leaderboard tests but were also cleaned with the quiz delete.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 9 GAME_MODES chips exist with correct data-testid='filter-mode-<mode>'. quiz-mode-<id> tag renders on every dashboard card. Leaderboard for quiz 3b480bdd-1118-4a67-ab2d-516693758ad7 has 2 entries both at 100% — use attempt f008381e-94e5-4519-ac79-cfef68e2b720 (TestCreator) for results page verification. Mobile breakpoint <1024px stacks player vertically (verified at 390px → grid-template-columns: 342px single col, lg:grid-cols-12 not applied). To repro the Results.jsx Promise.all bug, click any history entry whose quiz_id no longer exists in db.quizzes (e.g. 53ab216c-117e-47e7-a790-734af3a9b739 returns 'Quiz not found' from /api/quizzes/.../leaderboard). The QuizBuilder builder-game-mode-select dropdown and builder-draft-toggle checkbox exist at lines 317/340 of QuizBuilder.jsx — not E2E-clicked this run but backend POST with is_draft=true persists and is hidden from public Browse, visible only via mine=true&include_drafts=true (test_draft_hidden_from_public_browse + test_mine_with_include_drafts_shows_drafts confirm).",
+  "rca of the issue": "Results.jsx Promise.all blast radius — Promise.all rejects on first rejection, so a 404 on /quizzes/{id} (deleted quiz from a stale history entry) prevents setAttempt and setQuiz from ever firing. The finally{} clause flips loading=false but the LoadingRule guard `if (loading || !attempt || !quiz)` still returns the loading screen because attempt/quiz stay null → user sees indefinite loading + a red 'Uncaught runtime errors' panel from the axios rejection. Fix: change `Promise.all(...)` to `Promise.allSettled(...)` and handle each result independently, OR keep the attempt/quiz in their own Promise.all (essential data) and load leaderboard separately so it can fail silently."
+}

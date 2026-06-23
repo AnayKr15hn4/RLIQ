@@ -46,6 +46,18 @@ const RANKS = [
   { v: 8, l: "Supersonic Legend", c: "#ffffff" },
 ];
 
+const GAME_MODES = [
+  { v: "duel", l: "1v1 Duel" },
+  { v: "doubles", l: "2v2 Doubles" },
+  { v: "standard", l: "3v3 Standard" },
+  { v: "hoops", l: "Hoops" },
+  { v: "snowday", l: "Snowday" },
+  { v: "rumble", l: "Rumble" },
+  { v: "dropshot", l: "Dropshot" },
+  { v: "tournaments", l: "Tournaments" },
+  { v: "other", l: "Other / Freeplay" },
+];
+
 const uid = () => Math.random().toString(36).slice(2, 11);
 
 export default function QuizBuilder({ edit }) {
@@ -58,6 +70,8 @@ export default function QuizBuilder({ edit }) {
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [minRank, setMinRank] = useState(1);
   const [maxRank, setMaxRank] = useState(8);
+  const [gameMode, setGameMode] = useState("standard");
+  const [isDraft, setIsDraft] = useState(false);
   const [duration, setDuration] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [editingIdx, setEditingIdx] = useState(null);
@@ -149,6 +163,8 @@ export default function QuizBuilder({ edit }) {
         youtube_url: youtubeUrl,
         min_rank: minRank,
         max_rank: maxRank,
+        game_mode: gameMode,
+        is_draft: isDraft,
         duration_seconds: duration,
         questions,
       };
@@ -292,6 +308,49 @@ export default function QuizBuilder({ edit }) {
                   {duration ? ` · ${formatTime(duration)} VIDEO` : ""}
                 </div>
               </div>
+
+              <div>
+                <Label className="font-mono-rl text-[10px] tracking-widest text-zinc-400">GAME MODE</Label>
+                <Select value={gameMode} onValueChange={setGameMode}>
+                  <SelectTrigger
+                    className="bg-zinc-950 border-white/10 rounded-none mt-1"
+                    data-testid="builder-game-mode-select"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#0a0a0a] border-white/10 rounded-none">
+                    {GAME_MODES.map((g) => (
+                      <SelectItem key={g.v} value={g.v}>
+                        {g.l}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <label
+                className="flex items-center gap-3 cursor-pointer select-none px-3 py-2 border border-white/10 bg-zinc-950/60"
+                data-testid="builder-draft-toggle-label"
+              >
+                <input
+                  type="checkbox"
+                  checked={isDraft}
+                  onChange={(e) => setIsDraft(e.target.checked)}
+                  className="accent-[#ff6b00] w-4 h-4"
+                  data-testid="builder-draft-toggle"
+                />
+                <div className="flex-1">
+                  <div className="font-display uppercase text-sm tracking-wider">Save as draft</div>
+                  <div className="font-mono-rl text-[10px] text-zinc-500">
+                    // DRAFTS ARE HIDDEN FROM BROWSE — ONLY YOU CAN SEE THEM
+                  </div>
+                </div>
+                {isDraft && (
+                  <span className="tag" style={{ borderColor: "#ffd500", color: "#ffd500" }}>
+                    DRAFT
+                  </span>
+                )}
+              </label>
             </div>
           </div>
 

@@ -42,8 +42,21 @@ const RANKS = [
   { v: 8, l: "Supersonic Legend", c: "#ffffff" },
 ];
 
+const GAME_MODES = [
+  { v: "duel", l: "1v1 Duel", short: "1s" },
+  { v: "doubles", l: "2v2 Doubles", short: "2s" },
+  { v: "standard", l: "3v3 Standard", short: "3s" },
+  { v: "hoops", l: "Hoops", short: "HOOPS" },
+  { v: "snowday", l: "Snowday", short: "SNOW" },
+  { v: "rumble", l: "Rumble", short: "RUMBLE" },
+  { v: "dropshot", l: "Dropshot", short: "DROP" },
+  { v: "tournaments", l: "Tournaments", short: "TOURN" },
+  { v: "other", l: "Other", short: "OTHER" },
+];
+
 const rankLabel = (v) => RANKS.find((r) => r.v === v)?.l || "—";
 const rankColor = (v) => RANKS.find((r) => r.v === v)?.c || "#888";
+const modeLabel = (v) => GAME_MODES.find((g) => g.v === v)?.short || v?.toUpperCase();
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -62,6 +75,7 @@ export default function Dashboard() {
   const [maxRank, setMaxRank] = useState("any");
   const [minMinutes, setMinMinutes] = useState("");
   const [maxMinutes, setMaxMinutes] = useState("");
+  const [selectedModes, setSelectedModes] = useState([]); // array of mode values
 
   const fetchBrowse = async () => {
     const params = new URLSearchParams();
@@ -71,6 +85,7 @@ export default function Dashboard() {
     if (maxRank !== "any") params.set("max_rank", maxRank);
     if (minMinutes) params.set("min_duration", String(parseFloat(minMinutes) * 60));
     if (maxMinutes) params.set("max_duration", String(parseFloat(maxMinutes) * 60));
+    if (selectedModes.length > 0) params.set("game_mode", selectedModes.join(","));
     const { data } = await publicApi.get(`/quizzes?${params.toString()}`);
     setAllQuizzes(data);
   };
@@ -80,7 +95,7 @@ export default function Dashboard() {
     try {
       const cli = await api();
       const [m, s, h, f] = await Promise.all([
-        cli.get("/quizzes?mine=true"),
+        cli.get("/quizzes?mine=true&include_drafts=true"),
         cli.get("/me/stats"),
         cli.get("/me/attempts"),
         cli.get("/me/favorites"),
@@ -109,7 +124,7 @@ export default function Dashboard() {
     }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line
-  }, [q, creator, minRank, maxRank, minMinutes, maxMinutes]);
+  }, [q, creator, minRank, maxRank, minMinutes, maxMinutes, selectedModes]);
 
   const deleteQuiz = async (id) => {
     if (!window.confirm("Delete this quiz?")) return;
@@ -211,7 +226,7 @@ export default function Dashboard() {
           {/* BROWSE */}
           <TabsContent value="play" className="mt-6">
             <SearchAndFilters
-              {...{ q, setQ, creator, setCreator, minRank, setMinRank, maxRank, setMaxRank, minMinutes, setMinMinutes, maxMinutes, setMaxMinutes }}
+              {...{ q, setQ, creator, setCreator, minRank, setMinRank, maxRank, setMaxRank, minMinutes, setMinMinutes, maxMinutes, setMaxMinutes, selectedModes, setSelectedModes }}
               showFilters={showFilters}
               setShowFilters={setShowFilters}
               activeCount={activeFilterCount}
@@ -319,8 +334,12 @@ function SearchAndFilters({
   q, setQ, creator, setCreator,
   minRank, setMinRank, maxRank, setMaxRank,
   minMinutes, setMinMinutes, maxMinutes, setMaxMinutes,
+  selectedModes, setSelectedModes,
   showFilters, setShowFilters, activeCount, onClear,
 }) {
+  const toggleMode = (v) => {
+    setSelectedModes((cur) => (cur.includes(v) ? cur.filter((m) => m !== v) : [...cur, v]));
+  };
   return (
     <div className="mb-6">
       <div className="flex gap-2 flex-wrap items-center">
@@ -368,56 +387,80 @@ function SearchAndFilters({
       </div>
 
       {showFilters && (
-        <div className="mt-3 hud-clip border border-white/10 bg-[#0a0a0a] p-4 grid sm:grid-cols-2 lg:grid-cols-4 gap-3" data-testid="filters-panel">
-          <div>
-            <div className="font-mono-rl text-[10px] tracking-widest text-zinc-400 mb-1">MIN RANK</div>
-            <Select value={String(minRank)} onValueChange={(v) => setMinRank(v === "any" ? "any" : parseInt(v))}>
-              <SelectTrigger className="bg-zinc-950 border-white/10 rounded-none" data-testid="filter-min-rank">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-[#0a0a0a] border-white/10 rounded-none">
-                <SelectItem value="any">Any</SelectItem>
-                {RANKS.map((r) => <SelectItem key={r.v} value={String(r.v)}>{r.l}</SelectItem>)}
-              </SelectContent>
-            </Select>
+        <div className="mt-3 hud-clip border border-white/10 bg-[#0a0a0a] p-4 space-y-4" data-testid="filters-panel">
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <div className="font-mono-rl text-[10px] tracking-widest text-zinc-400 mb-1">MIN RANK</div>
+              <Select value={String(minRank)} onValueChange={(v) => setMinRank(v === "any" ? "any" : parseInt(v))}>
+                <SelectTrigger className="bg-zinc-950 border-white/10 rounded-none" data-testid="filter-min-rank">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-[#0a0a0a] border-white/10 rounded-none">
+                  <SelectItem value="any">Any</SelectItem>
+                  {RANKS.map((r) => <SelectItem key={r.v} value={String(r.v)}>{r.l}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <div className="font-mono-rl text-[10px] tracking-widest text-zinc-400 mb-1">MAX RANK</div>
+              <Select value={String(maxRank)} onValueChange={(v) => setMaxRank(v === "any" ? "any" : parseInt(v))}>
+                <SelectTrigger className="bg-zinc-950 border-white/10 rounded-none" data-testid="filter-max-rank">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-[#0a0a0a] border-white/10 rounded-none">
+                  <SelectItem value="any">Any</SelectItem>
+                  {RANKS.map((r) => <SelectItem key={r.v} value={String(r.v)}>{r.l}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <div className="font-mono-rl text-[10px] tracking-widest text-zinc-400 mb-1">MIN MINUTES</div>
+              <Input
+                type="number"
+                min="0"
+                step="0.5"
+                value={minMinutes}
+                onChange={(e) => setMinMinutes(e.target.value)}
+                placeholder="e.g. 2"
+                className="bg-zinc-950 border-white/10 rounded-none"
+                data-testid="filter-min-minutes"
+              />
+            </div>
+            <div>
+              <div className="font-mono-rl text-[10px] tracking-widest text-zinc-400 mb-1">MAX MINUTES</div>
+              <Input
+                type="number"
+                min="0"
+                step="0.5"
+                value={maxMinutes}
+                onChange={(e) => setMaxMinutes(e.target.value)}
+                placeholder="e.g. 10"
+                className="bg-zinc-950 border-white/10 rounded-none"
+                data-testid="filter-max-minutes"
+              />
+            </div>
           </div>
           <div>
-            <div className="font-mono-rl text-[10px] tracking-widest text-zinc-400 mb-1">MAX RANK</div>
-            <Select value={String(maxRank)} onValueChange={(v) => setMaxRank(v === "any" ? "any" : parseInt(v))}>
-              <SelectTrigger className="bg-zinc-950 border-white/10 rounded-none" data-testid="filter-max-rank">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-[#0a0a0a] border-white/10 rounded-none">
-                <SelectItem value="any">Any</SelectItem>
-                {RANKS.map((r) => <SelectItem key={r.v} value={String(r.v)}>{r.l}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <div className="font-mono-rl text-[10px] tracking-widest text-zinc-400 mb-1">MIN MINUTES</div>
-            <Input
-              type="number"
-              min="0"
-              step="0.5"
-              value={minMinutes}
-              onChange={(e) => setMinMinutes(e.target.value)}
-              placeholder="e.g. 2"
-              className="bg-zinc-950 border-white/10 rounded-none"
-              data-testid="filter-min-minutes"
-            />
-          </div>
-          <div>
-            <div className="font-mono-rl text-[10px] tracking-widest text-zinc-400 mb-1">MAX MINUTES</div>
-            <Input
-              type="number"
-              min="0"
-              step="0.5"
-              value={maxMinutes}
-              onChange={(e) => setMaxMinutes(e.target.value)}
-              placeholder="e.g. 10"
-              className="bg-zinc-950 border-white/10 rounded-none"
-              data-testid="filter-max-minutes"
-            />
+            <div className="font-mono-rl text-[10px] tracking-widest text-zinc-400 mb-2">GAME MODES (TOGGLE TO ADD)</div>
+            <div className="flex flex-wrap gap-2" data-testid="filter-game-modes">
+              {GAME_MODES.map((g) => {
+                const on = selectedModes.includes(g.v);
+                return (
+                  <button
+                    key={g.v}
+                    onClick={() => toggleMode(g.v)}
+                    className={`px-3 py-1.5 text-xs font-display uppercase tracking-wider border transition ${
+                      on
+                        ? "border-[#ff6b00] bg-[#ff6b00]/15 text-[#ff6b00]"
+                        : "border-white/10 text-zinc-400 hover:border-white/30 hover:text-zinc-200"
+                    }`}
+                    data-testid={`filter-mode-${g.v}`}
+                  >
+                    {g.l}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}
@@ -435,6 +478,24 @@ function QuizCard({ q, owner, onDelete, isFav, onFav }) {
         <img src={thumb} alt={q.title} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition" />
         <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent" />
         <span className="absolute top-2 left-2 tag">{q.questions?.length || 0} Q</span>
+        {q.game_mode && (
+          <span
+            className="absolute top-2 left-14 tag"
+            style={{ borderColor: "#007aff", color: "#69b8ff" }}
+            data-testid={`quiz-mode-${q.id}`}
+          >
+            {modeLabel(q.game_mode)}
+          </span>
+        )}
+        {q.is_draft && (
+          <span
+            className="absolute bottom-2 right-2 tag"
+            style={{ borderColor: "#ffd500", color: "#ffd500" }}
+            data-testid={`quiz-draft-badge-${q.id}`}
+          >
+            DRAFT
+          </span>
+        )}
         {q.duration_seconds ? (
           <span className="absolute bottom-2 left-2 tag inline-flex items-center gap-1">
             <Clock className="w-3 h-3" /> {formatTime(q.duration_seconds)}

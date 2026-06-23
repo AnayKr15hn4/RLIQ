@@ -389,7 +389,7 @@ export default function QuizPlayer() {
 
           {/* RIGHT: Question / feedback panel */}
           <div className="lg:col-span-5">
-            <div className="bg-[#0a0a0a] border border-white/10 hud-clip p-6 min-h-[420px]" data-testid="question-panel">
+            <div className="bg-[#0a0a0a] border border-white/10 hud-clip p-4 sm:p-6 min-h-[320px] lg:min-h-[420px]" data-testid="question-panel">
               {feedback ? (
                 <FeedbackPanel feedback={feedback} onContinue={continueAfterFeedback} />
               ) : activeQ ? (

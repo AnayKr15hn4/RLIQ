@@ -86,6 +86,11 @@ class Question(BaseModel):
     explanation: str = ""
 
 
+GameMode = Literal[
+    "duel", "doubles", "standard", "hoops", "snowday", "rumble", "dropshot", "tournaments", "other"
+]
+
+
 class QuizCreate(BaseModel):
     title: str
     description: str = ""
@@ -93,6 +98,8 @@ class QuizCreate(BaseModel):
     difficulty: str = "rookie"  # legacy field, kept for backwards compat
     min_rank: int = 1   # 1=Bronze … 8=Supersonic Legend
     max_rank: int = 8
+    game_mode: GameMode = "standard"
+    is_draft: bool = False
     duration_seconds: Optional[float] = None
     questions: List[Question] = Field(default_factory=list)
 
@@ -532,12 +539,14 @@ async def create_quiz(payload: QuizCreate, user=Depends(get_current_user)):
 @api_router.get("/quizzes", response_model=List[Quiz])
 async def list_quizzes(
     mine: bool = False,
+    include_drafts: bool = False,
     q: Optional[str] = None,
     creator: Optional[str] = None,
     min_rank: Optional[int] = None,
     max_rank: Optional[int] = None,
     min_duration: Optional[float] = None,
     max_duration: Optional[float] = None,
+    game_mode: Optional[str] = None,
     user=Depends(get_optional_user),
 ):
     query: Dict[str, Any] = {}
@@ -545,27 +554,35 @@ async def list_quizzes(
         if not user:
             raise HTTPException(status_code=401, detail="Auth required for 'mine'")
         query["creator_id"] = user["id"]
+        # Show drafts only to the creator
+        if not include_drafts:
+            query["$or"] = [{"is_draft": {"$ne": True}}, {"is_draft": {"$exists": False}}]
+    else:
+        # Public browse never sees drafts
+        query["$or"] = [{"is_draft": {"$ne": True}}, {"is_draft": {"$exists": False}}]
     if q:
         query["title"] = {"$regex": re.escape(q), "$options": "i"}
     if creator:
         query["creator_name"] = {"$regex": re.escape(creator), "$options": "i"}
-    # Rank-range overlap: quiz.max_rank >= filter.min_rank AND quiz.min_rank <= filter.max_rank
     if min_rank is not None:
         query["max_rank"] = {"$gte": min_rank}
     if max_rank is not None:
         query["min_rank"] = {"$lte": max_rank}
     if min_duration is not None:
-        query["duration_seconds"] = query.get("duration_seconds", {})
-        query["duration_seconds"]["$gte"] = min_duration
+        query.setdefault("duration_seconds", {})["$gte"] = min_duration
     if max_duration is not None:
-        query["duration_seconds"] = query.get("duration_seconds", {})
-        query["duration_seconds"]["$lte"] = max_duration
+        query.setdefault("duration_seconds", {})["$lte"] = max_duration
+    if game_mode:
+        modes = [m.strip() for m in game_mode.split(",") if m.strip()]
+        if modes:
+            query["game_mode"] = {"$in": modes}
     docs = await db.quizzes.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
-    # Backfill defaults on legacy docs so the response model validates
     for d in docs:
         d.setdefault("min_rank", 1)
         d.setdefault("max_rank", 8)
         d.setdefault("duration_seconds", None)
+        d.setdefault("game_mode", "standard")
+        d.setdefault("is_draft", False)
     return docs
 
 
@@ -577,7 +594,47 @@ async def get_quiz(quiz_id: str):
     doc.setdefault("min_rank", 1)
     doc.setdefault("max_rank", 8)
     doc.setdefault("duration_seconds", None)
+    doc.setdefault("game_mode", "standard")
+    doc.setdefault("is_draft", False)
     return doc
+
+
+@api_router.get("/quizzes/{quiz_id}/leaderboard")
+async def quiz_leaderboard(quiz_id: str, limit: int = 25):
+    quiz = await db.quizzes.find_one({"id": quiz_id}, {"_id": 0, "id": 1})
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    # For each user, take their BEST attempt on this quiz
+    pipeline = [
+        {"$match": {"quiz_id": quiz_id}},
+        {"$sort": {"score": -1, "created_at": 1}},
+        {"$group": {
+            "_id": "$user_id",
+            "user_name": {"$first": "$user_name"},
+            "score": {"$first": "$score"},
+            "correct_count": {"$first": "$correct_count"},
+            "total_count": {"$first": "$total_count"},
+            "attempt_id": {"$first": "$id"},
+            "created_at": {"$first": "$created_at"},
+        }},
+        {"$sort": {"score": -1, "created_at": 1}},
+        {"$limit": min(max(limit, 1), 100)},
+    ]
+    rows = []
+    rank = 0
+    async for r in db.attempts.aggregate(pipeline):
+        rank += 1
+        rows.append({
+            "rank": rank,
+            "user_id": r["_id"],
+            "user_name": r.get("user_name", ""),
+            "score": r["score"],
+            "correct_count": r.get("correct_count", 0),
+            "total_count": r.get("total_count", 0),
+            "attempt_id": r.get("attempt_id"),
+            "created_at": r.get("created_at"),
+        })
+    return {"quiz_id": quiz_id, "entries": rows}
 
 
 @api_router.put("/quizzes/{quiz_id}", response_model=Quiz)

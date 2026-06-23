@@ -3,25 +3,30 @@ import { Link, useParams } from "react-router-dom";
 import Navbar from "@/components/Navbar";
 import LoadingRule from "@/components/LoadingRule";
 import { api, publicApi, formatTime } from "@/lib/api";
-import { CheckCircle2, XCircle, MinusCircle, ArrowRight, RotateCcw, Trophy } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import { CheckCircle2, XCircle, MinusCircle, ArrowRight, RotateCcw, Trophy, Medal } from "lucide-react";
 
 export default function Results() {
   const { id, attemptId } = useParams();
+  const { user } = useAuth();
   const [attempt, setAttempt] = useState(null);
   const [quiz, setQuiz] = useState(null);
+  const [leaderboard, setLeaderboard] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
       try {
         const cli = await api();
-        const [a, q] = await Promise.all([
+        const [a, q, lb] = await Promise.all([
           cli.get(`/attempts/${attemptId}`),
           publicApi.get(`/quizzes/${id}`),
+          publicApi.get(`/quizzes/${id}/leaderboard?limit=10`),
         ]);
         q.data.questions = (q.data.questions || []).slice().sort((x, y) => x.timestamp - y.timestamp);
         setAttempt(a.data);
         setQuiz(q.data);
+        setLeaderboard(lb.data);
       } finally {
         setLoading(false);
       }
@@ -65,6 +70,53 @@ export default function Results() {
             </Link>
           </div>
         </div>
+
+        {/* LEADERBOARD */}
+        {leaderboard && leaderboard.entries.length > 0 && (
+          <div className="hud-clip border border-white/10 bg-[#0a0a0a] p-6 mb-8" data-testid="results-leaderboard">
+            <div className="flex items-center gap-2 mb-4">
+              <Medal className="w-5 h-5 text-[#ffd500]" />
+              <div className="font-mono-rl text-xs tracking-[0.3em] text-[#ffd500]">
+                /// LEADERBOARD — TOP {leaderboard.entries.length}
+              </div>
+            </div>
+            <div className="space-y-1">
+              {leaderboard.entries.map((row) => {
+                const isMine = user?.id && row.user_id === user.id;
+                const isTop3 = row.rank <= 3;
+                const rankColor = row.rank === 1 ? "#ffd500" : row.rank === 2 ? "#c0c0c0" : row.rank === 3 ? "#cd7f32" : "#71717a";
+                return (
+                  <div
+                    key={row.attempt_id}
+                    className={`flex items-center gap-4 px-3 py-2 ${
+                      isMine ? "bg-[#ff6b00]/10 border border-[#ff6b00]/40" : "border border-white/5"
+                    }`}
+                    data-testid={`leaderboard-row-${row.rank}`}
+                  >
+                    <div
+                      className="font-display font-black text-xl w-8 text-center"
+                      style={{ color: rankColor }}
+                    >
+                      {isTop3 ? `#${row.rank}` : row.rank}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-display font-bold uppercase truncate">
+                        {row.user_name || "—"}
+                        {isMine && (
+                          <span className="ml-2 font-mono-rl text-[10px] text-[#ff6b00] tracking-widest">// YOU</span>
+                        )}
+                      </div>
+                      <div className="font-mono-rl text-[10px] text-zinc-500">
+                        {row.correct_count}/{row.total_count} CORRECT
+                      </div>
+                    </div>
+                    <div className="font-display font-black text-xl text-white">{row.score}%</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="space-y-4">
           {attempt.answers.map((a, idx) => {
