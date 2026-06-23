@@ -2,14 +2,14 @@
   "name": "rliq-root",
   "private": true,
   "engines": {
-    "node": "20.x"
+    "node": "24.x"
   },
   "overrides": {
-    "ajv": "^6.12.6",
-    "ajv-keywords": "^3.5.2"
+    "ajv": "^8.13.0",
+    "ajv-keywords": "^5.1.0"
   },
   "resolutions": {
-    "ajv": "^6.12.6",
-    "ajv-keywords": "^3.5.2"
+    "ajv": "^8.13.0",
+    "ajv-keywords": "^5.1.0"
   }
 }
