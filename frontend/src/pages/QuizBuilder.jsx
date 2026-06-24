@@ -1,6 +1,6 @@
 /* eslint-disable */
 import React, { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import YouTube from "react-youtube";
 import Navbar from "@/components/Navbar";
 import LoadingRule from "@/components/LoadingRule";
@@ -72,6 +72,9 @@ export default function QuizBuilder({ edit }) {
   const [maxRank, setMaxRank] = useState(8);
   const [gameMode, setGameMode] = useState("standard");
   const [isDraft, setIsDraft] = useState(false);
+  const [visibility, setVisibility] = useState("public");
+  const [creatorVerified, setCreatorVerified] = useState(false);
+  const [shareToken, setShareToken] = useState(null);
   const [duration, setDuration] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [editingIdx, setEditingIdx] = useState(null);
@@ -91,6 +94,10 @@ export default function QuizBuilder({ edit }) {
         setYoutubeUrl(data.youtube_url);
         setMinRank(data.min_rank ?? 1);
         setMaxRank(data.max_rank ?? 8);
+        setGameMode(data.game_mode ?? "standard");
+        setIsDraft(!!data.is_draft);
+        setVisibility(data.visibility ?? "public");
+        setShareToken(data.share_token ?? null);
         setDuration(data.duration_seconds ?? null);
         setQuestions(data.questions || []);
       } catch (e) {
@@ -101,6 +108,19 @@ export default function QuizBuilder({ edit }) {
       }
     })();
   }, [edit, id, navigate]);
+
+  // Fetch verified status for the current creator (any time we open the builder)
+  useEffect(() => {
+    (async () => {
+      try {
+        const cli = await api();
+        const { data } = await cli.get(`/creator/me`);
+        setCreatorVerified(!!data.verified);
+      } catch {
+        setCreatorVerified(false);
+      }
+    })();
+  }, []);
 
   // Poll player time
   useEffect(() => {
@@ -165,15 +185,22 @@ export default function QuizBuilder({ edit }) {
         max_rank: maxRank,
         game_mode: gameMode,
         is_draft: isDraft,
+        visibility: creatorVerified ? visibility : "unlisted",
         duration_seconds: duration,
         questions,
       };
       if (edit) {
-        await cli.put(`/quizzes/${id}`, payload);
+        const { data } = await cli.put(`/quizzes/${id}`, payload);
+        setShareToken(data.share_token);
         toast.success("Quiz updated");
       } else {
         const { data } = await cli.post(`/quizzes`, payload);
-        toast.success("Quiz created");
+        setShareToken(data.share_token);
+        if (data.visibility !== "public" && payload.visibility === "public") {
+          toast.success("Saved as Unlisted — verify your creator profile to make it Public.");
+        } else {
+          toast.success("Quiz created");
+        }
         navigate(`/dashboard`);
         return;
       }
@@ -351,6 +378,71 @@ export default function QuizBuilder({ edit }) {
                   </span>
                 )}
               </label>
+
+              <div>
+                <Label className="font-mono-rl text-[10px] tracking-widest text-zinc-400">VISIBILITY</Label>
+                <div className="grid grid-cols-2 gap-2 mt-1" data-testid="builder-visibility-group">
+                  <button
+                    type="button"
+                    onClick={() => setVisibility("public")}
+                    disabled={!creatorVerified}
+                    className={`px-3 py-2 border text-left ${
+                      visibility === "public" && creatorVerified
+                        ? "border-[#ff6b00] bg-[#ff6b00]/10 text-[#ff6b00]"
+                        : creatorVerified
+                          ? "border-white/10 text-zinc-300 hover:border-white/30"
+                          : "border-white/5 text-zinc-600 cursor-not-allowed"
+                    }`}
+                    data-testid="builder-visibility-public"
+                    title={creatorVerified ? "Show in Browse" : "Verify your creator profile to publish public quizzes"}
+                  >
+                    <div className="font-display uppercase text-sm tracking-wider">Public</div>
+                    <div className="font-mono-rl text-[10px]">
+                      {creatorVerified ? "// SHOWS IN BROWSE" : "// REQUIRES GC1+ VERIFICATION"}
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVisibility("unlisted")}
+                    className={`px-3 py-2 border text-left ${
+                      visibility === "unlisted" || !creatorVerified
+                        ? "border-[#007aff] bg-[#007aff]/10 text-[#007aff]"
+                        : "border-white/10 text-zinc-300 hover:border-white/30"
+                    }`}
+                    data-testid="builder-visibility-unlisted"
+                  >
+                    <div className="font-display uppercase text-sm tracking-wider">Unlisted</div>
+                    <div className="font-mono-rl text-[10px]">// LINK-ONLY</div>
+                  </button>
+                </div>
+                {!creatorVerified && (
+                  <div className="font-mono-rl text-[10px] text-zinc-500 mt-2">
+                    // <Link to="/creator/verify" className="text-[#ff6b00] hover:underline" data-testid="builder-verify-link">VERIFY YOUR CREATOR PROFILE →</Link> TO PUBLISH PUBLIC QUIZZES
+                  </div>
+                )}
+              </div>
+
+              {shareToken && (
+                <div className="border border-white/10 bg-zinc-950/60 px-3 py-2" data-testid="builder-share-link-block">
+                  <div className="font-mono-rl text-[10px] tracking-widest text-zinc-400 mb-1">SHARE LINK</div>
+                  <div className="flex items-center gap-2">
+                    <code className="text-xs text-[#007aff] flex-1 truncate" data-testid="builder-share-link-value">
+                      {window.location.origin}/q/{shareToken}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(`${window.location.origin}/q/${shareToken}`);
+                        toast.success("Copied");
+                      }}
+                      className="btn-ghost-volt hud-clip px-2 py-1 text-[10px]"
+                      data-testid="builder-share-link-copy"
+                    >
+                      COPY
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 

@@ -12,6 +12,9 @@ import Results from "@/pages/Results";
 import VerifyEmail from "@/pages/VerifyEmail";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
+import CreatorVerify from "@/pages/CreatorVerify";
+import AdminVerifications from "@/pages/AdminVerifications";
+import SharedQuizRedirect from "@/pages/SharedQuizRedirect";
 import LoadingRule from "@/components/LoadingRule";
 
 function PrivateRoute({ children }) {
@@ -69,6 +72,23 @@ function App() {
               element={
                 <PrivateRoute>
                   <Results />
+                </PrivateRoute>
+              }
+            />
+            <Route path="/q/:token" element={<SharedQuizRedirect />} />
+            <Route
+              path="/creator/verify"
+              element={
+                <PrivateRoute>
+                  <CreatorVerify />
+                </PrivateRoute>
+              }
+            />
+            <Route
+              path="/admin/verifications"
+              element={
+                <PrivateRoute>
+                  <AdminVerifications />
                 </PrivateRoute>
               }
             />

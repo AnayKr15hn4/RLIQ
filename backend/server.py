@@ -29,6 +29,11 @@ SUPABASE_SERVICE_KEY = os.environ['SUPABASE_SERVICE_KEY']
 BREVO_API_KEY = os.environ['BREVO_API_KEY']
 BREVO_SENDER_EMAIL = os.environ['BREVO_SENDER_EMAIL']
 BREVO_SENDER_NAME = os.environ.get('BREVO_SENDER_NAME', 'RLIQ')
+ADMIN_EMAILS = {
+    e.strip().lower()
+    for e in os.environ.get('ADMIN_EMAILS', 'creator@rocketsense.test').split(',')
+    if e.strip()
+}
 
 OTP_TTL_SECONDS = 600        # 10 minutes
 OTP_MAX_ATTEMPTS = 5
@@ -90,6 +95,15 @@ GameMode = Literal[
     "duel", "doubles", "standard", "hoops", "snowday", "rumble", "dropshot", "tournaments", "other"
 ]
 
+Visibility = Literal["public", "unlisted"]
+
+PEAK_RANKS = ["B", "S", "G", "P", "D", "C", "GC1", "GC2", "GC3", "SSL"]
+
+
+def gen_share_token() -> str:
+    # URL-safe, ~12 chars, ~71 bits entropy
+    return secrets.token_urlsafe(9)
+
 
 class QuizCreate(BaseModel):
     title: str
@@ -99,6 +113,7 @@ class QuizCreate(BaseModel):
     min_rank: int = 1   # 1=Bronze … 8=Supersonic Legend
     max_rank: int = 8
     game_mode: GameMode = "standard"
+    visibility: Visibility = "public"
     is_draft: bool = False
     duration_seconds: Optional[float] = None
     questions: List[Question] = Field(default_factory=list)
@@ -107,10 +122,49 @@ class QuizCreate(BaseModel):
 class Quiz(QuizCreate):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     video_id: str
+    share_token: str = Field(default_factory=gen_share_token)
     creator_id: str
     creator_name: str
+    creator_verified: bool = False  # denormalized, populated on read
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     play_count: int = 0
+
+
+# ============== CREATOR VERIFICATION MODELS ==============
+class CreatorProfile(BaseModel):
+    user_id: str
+    rl_tracker_url: Optional[str] = None
+    platform: Optional[Literal["steam", "epic", "psn", "xbox"]] = None
+    rl_username: Optional[str] = None
+    peak_rank: Optional[str] = None       # one of PEAK_RANKS once approved
+    verification_code: Optional[str] = None  # current outstanding code
+    screenshot_url: Optional[str] = None  # link to evidence (imgur, etc.)
+    verification_status: Literal["none", "pending", "approved", "rejected"] = "none"
+    rejection_reason: Optional[str] = None
+    verified: bool = False
+    submitted_at: Optional[str] = None
+    reviewed_at: Optional[str] = None
+    reviewed_by: Optional[str] = None
+
+
+class StartVerificationResponse(BaseModel):
+    verification_code: str
+
+
+class SubmitVerificationRequest(BaseModel):
+    rl_tracker_url: str
+    platform: Literal["steam", "epic", "psn", "xbox"]
+    rl_username: str
+    screenshot_url: str   # URL to publicly accessible screenshot (imgur, etc.)
+    claimed_peak_rank: Literal["GC1", "GC2", "GC3", "SSL"]
+
+
+class AdminApproveRequest(BaseModel):
+    peak_rank: Literal["GC1", "GC2", "GC3", "SSL"]
+
+
+class AdminRejectRequest(BaseModel):
+    reason: str
 
 
 class AnswerSubmission(BaseModel):
@@ -526,14 +580,41 @@ async def create_quiz(payload: QuizCreate, user=Depends(get_current_user)):
     video_id = extract_youtube_id(payload.youtube_url)
     if not video_id:
         raise HTTPException(status_code=400, detail="Invalid YouTube URL")
+    # Enforce: only verified creators can publish public quizzes
+    profile = await db.creator_profiles.find_one({"user_id": user["id"]})
+    is_verified = bool(profile and profile.get("verified"))
+    payload_data = payload.model_dump()
+    if payload_data.get("visibility") == "public" and not is_verified:
+        payload_data["visibility"] = "unlisted"
     quiz = Quiz(
-        **payload.model_dump(),
+        **payload_data,
         video_id=video_id,
+        share_token=gen_share_token(),
         creator_id=user["id"],
         creator_name=user_display_name(user),
+        creator_verified=is_verified,
     )
     await db.quizzes.insert_one(quiz.model_dump())
     return quiz
+
+
+async def _hydrate_quiz_doc(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Backfill defaults + denormalize creator_verified status."""
+    d.setdefault("min_rank", 1)
+    d.setdefault("max_rank", 8)
+    d.setdefault("duration_seconds", None)
+    d.setdefault("game_mode", "standard")
+    d.setdefault("is_draft", False)
+    d.setdefault("visibility", "public")
+    if not d.get("share_token"):
+        token = gen_share_token()
+        await db.quizzes.update_one({"id": d["id"]}, {"$set": {"share_token": token}})
+        d["share_token"] = token
+    profile = await db.creator_profiles.find_one(
+        {"user_id": d["creator_id"]}, {"_id": 0, "verified": 1}
+    )
+    d["creator_verified"] = bool(profile and profile.get("verified"))
+    return d
 
 
 @api_router.get("/quizzes", response_model=List[Quiz])
@@ -554,12 +635,16 @@ async def list_quizzes(
         if not user:
             raise HTTPException(status_code=401, detail="Auth required for 'mine'")
         query["creator_id"] = user["id"]
-        # Show drafts only to the creator
         if not include_drafts:
             query["$or"] = [{"is_draft": {"$ne": True}}, {"is_draft": {"$exists": False}}]
     else:
-        # Public browse never sees drafts
-        query["$or"] = [{"is_draft": {"$ne": True}}, {"is_draft": {"$exists": False}}]
+        # Public browse: only public + non-draft + verified creator
+        query["$and"] = [
+            {"$or": [{"is_draft": {"$ne": True}}, {"is_draft": {"$exists": False}}]},
+            {"$or": [{"visibility": "public"}, {"visibility": {"$exists": False}}]},
+        ]
+        verified_ids = await db.creator_profiles.distinct("user_id", {"verified": True})
+        query["creator_id"] = {"$in": verified_ids}
     if q:
         query["title"] = {"$regex": re.escape(q), "$options": "i"}
     if creator:
@@ -577,13 +662,10 @@ async def list_quizzes(
         if modes:
             query["game_mode"] = {"$in": modes}
     docs = await db.quizzes.find(query, {"_id": 0}).sort("created_at", -1).to_list(200)
+    out = []
     for d in docs:
-        d.setdefault("min_rank", 1)
-        d.setdefault("max_rank", 8)
-        d.setdefault("duration_seconds", None)
-        d.setdefault("game_mode", "standard")
-        d.setdefault("is_draft", False)
-    return docs
+        out.append(await _hydrate_quiz_doc(d))
+    return out
 
 
 @api_router.get("/quizzes/{quiz_id}", response_model=Quiz)
@@ -591,12 +673,15 @@ async def get_quiz(quiz_id: str):
     doc = await db.quizzes.find_one({"id": quiz_id}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Quiz not found")
-    doc.setdefault("min_rank", 1)
-    doc.setdefault("max_rank", 8)
-    doc.setdefault("duration_seconds", None)
-    doc.setdefault("game_mode", "standard")
-    doc.setdefault("is_draft", False)
-    return doc
+    return await _hydrate_quiz_doc(doc)
+
+
+@api_router.get("/quizzes/share/{share_token}", response_model=Quiz)
+async def get_quiz_by_share(share_token: str):
+    doc = await db.quizzes.find_one({"share_token": share_token}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    return await _hydrate_quiz_doc(doc)
 
 
 @api_router.get("/quizzes/{quiz_id}/leaderboard")
@@ -647,11 +732,16 @@ async def update_quiz(quiz_id: str, payload: QuizCreate, user=Depends(get_curren
     video_id = extract_youtube_id(payload.youtube_url)
     if not video_id:
         raise HTTPException(status_code=400, detail="Invalid YouTube URL")
+    # Enforce: only verified creators can keep visibility=public
+    profile = await db.creator_profiles.find_one({"user_id": user["id"]})
+    is_verified = bool(profile and profile.get("verified"))
     update = payload.model_dump()
+    if update.get("visibility") == "public" and not is_verified:
+        update["visibility"] = "unlisted"
     update["video_id"] = video_id
     await db.quizzes.update_one({"id": quiz_id}, {"$set": update})
     merged = {**existing, **update}
-    return merged
+    return await _hydrate_quiz_doc(merged)
 
 
 @api_router.delete("/quizzes/{quiz_id}")
@@ -842,6 +932,164 @@ async def my_stats(user=Depends(get_current_user)):
     }
 
 
+# ============== CREATOR VERIFICATION ENDPOINTS ==============
+def _is_admin(user: Dict[str, Any]) -> bool:
+    email = (user.get("email") or "").lower()
+    return email in ADMIN_EMAILS
+
+
+def _profile_to_dict(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Strip MongoDB _id and shape the profile for client."""
+    p.pop("_id", None)
+    return p
+
+
+@api_router.get("/creator/me")
+async def creator_me(user=Depends(get_current_user)):
+    profile = await db.creator_profiles.find_one({"user_id": user["id"]}, {"_id": 0})
+    if not profile:
+        return {
+            "user_id": user["id"],
+            "verification_status": "none",
+            "verified": False,
+        }
+    return profile
+
+
+@api_router.post("/creator/start-verification", response_model=StartVerificationResponse)
+async def start_verification(user=Depends(get_current_user)):
+    existing = await db.creator_profiles.find_one({"user_id": user["id"]})
+    if existing and existing.get("verified"):
+        raise HTTPException(status_code=409, detail="You are already verified.")
+    # Generate a fresh code
+    code = "RLQUIZ-" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
+    await db.creator_profiles.update_one(
+        {"user_id": user["id"]},
+        {
+            "$set": {
+                "user_id": user["id"],
+                "verification_code": code,
+                "verification_status": existing.get("verification_status", "none") if existing else "none",
+                "verified": bool(existing and existing.get("verified")),
+            }
+        },
+        upsert=True,
+    )
+    return {"verification_code": code}
+
+
+@api_router.post("/creator/submit-verification")
+async def submit_verification(
+    payload: SubmitVerificationRequest, user=Depends(get_current_user)
+):
+    profile = await db.creator_profiles.find_one({"user_id": user["id"]})
+    if not profile or not profile.get("verification_code"):
+        raise HTTPException(status_code=400, detail="Start the verification flow first to get a code.")
+    if profile.get("verified"):
+        raise HTTPException(status_code=409, detail="You are already verified.")
+    # Basic URL sanity
+    if not payload.rl_tracker_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="RL Tracker URL must start with http(s)://")
+    if not payload.screenshot_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Screenshot URL must start with http(s)://")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.creator_profiles.update_one(
+        {"user_id": user["id"]},
+        {
+            "$set": {
+                "rl_tracker_url": payload.rl_tracker_url,
+                "platform": payload.platform,
+                "rl_username": payload.rl_username,
+                "screenshot_url": payload.screenshot_url,
+                "peak_rank": payload.claimed_peak_rank,  # admin will confirm
+                "verification_status": "pending",
+                "submitted_at": now,
+                "rejection_reason": None,
+            }
+        },
+        upsert=True,
+    )
+    return {"ok": True, "status": "pending"}
+
+
+# --- admin queue ---
+@api_router.get("/admin/verifications")
+async def admin_list_verifications(
+    status_filter: str = "pending", user=Depends(get_current_user)
+):
+    if not _is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin only")
+    query: Dict[str, Any] = {}
+    if status_filter and status_filter != "all":
+        query["verification_status"] = status_filter
+    rows = await db.creator_profiles.find(query, {"_id": 0}).sort("submitted_at", -1).to_list(200)
+    # Best-effort: join the user's email for context
+    out = []
+    for r in rows:
+        try:
+            r_user = await _supa_admin("GET", f"/auth/v1/admin/users/{r['user_id']}")
+            if r_user.status_code == 200:
+                u = r_user.json()
+                r["email"] = u.get("email")
+                r["display_name"] = (u.get("user_metadata") or {}).get("display_name")
+        except Exception:
+            pass
+        out.append(r)
+    return out
+
+
+@api_router.post("/admin/verifications/{user_id}/approve")
+async def admin_approve_verification(
+    user_id: str, payload: AdminApproveRequest, user=Depends(get_current_user)
+):
+    if not _is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin only")
+    now = datetime.now(timezone.utc).isoformat()
+    res = await db.creator_profiles.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "verified": True,
+                "peak_rank": payload.peak_rank,
+                "verification_status": "approved",
+                "reviewed_at": now,
+                "reviewed_by": user["id"],
+                "rejection_reason": None,
+            }
+        },
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="No verification request for that user")
+    # Re-stamp denorm on existing quizzes (cheap aggregate)
+    await db.quizzes.update_many({"creator_id": user_id}, {"$set": {"creator_verified": True}})
+    return {"ok": True}
+
+
+@api_router.post("/admin/verifications/{user_id}/reject")
+async def admin_reject_verification(
+    user_id: str, payload: AdminRejectRequest, user=Depends(get_current_user)
+):
+    if not _is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin only")
+    now = datetime.now(timezone.utc).isoformat()
+    res = await db.creator_profiles.update_one(
+        {"user_id": user_id},
+        {
+            "$set": {
+                "verified": False,
+                "verification_status": "rejected",
+                "rejection_reason": payload.reason,
+                "reviewed_at": now,
+                "reviewed_by": user["id"],
+            }
+        },
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="No verification request for that user")
+    await db.quizzes.update_many({"creator_id": user_id}, {"$set": {"creator_verified": False}})
+    return {"ok": True}
+
+
 app.include_router(api_router)
 
 app.add_middleware(
@@ -854,8 +1102,3 @@ app.add_middleware(
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()

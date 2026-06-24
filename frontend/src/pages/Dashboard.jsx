@@ -28,6 +28,8 @@ import {
   Clock,
   History as HistoryIcon,
   X,
+  ShieldCheck,
+  Share2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -66,6 +68,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [history, setHistory] = useState([]);
   const [favorites, setFavorites] = useState({ quiz_ids: [], creator_ids: [], quizzes: [], creators: [] });
+  const [creatorProfile, setCreatorProfile] = useState(null);
 
   // search & filters
   const [showFilters, setShowFilters] = useState(false);
@@ -94,16 +97,18 @@ export default function Dashboard() {
     setLoading(true);
     try {
       const cli = await api();
-      const [m, s, h, f] = await Promise.all([
+      const [m, s, h, f, cp] = await Promise.all([
         cli.get("/quizzes?mine=true&include_drafts=true"),
         cli.get("/me/stats"),
         cli.get("/me/attempts"),
         cli.get("/me/favorites"),
+        cli.get("/creator/me").catch(() => ({ data: { verified: false, verification_status: "none" } })),
       ]);
       setMyQuizzes(m.data);
       setStats(s.data);
       setHistory(h.data);
       setFavorites(f.data);
+      setCreatorProfile(cp.data);
       await fetchBrowse();
     } catch (e) {
       toast.error("Failed to load dashboard");
@@ -206,6 +211,53 @@ export default function Dashboard() {
             </button>
           </Link>
         </div>
+
+        {/* VERIFICATION CTA */}
+        {creatorProfile && !creatorProfile.verified && (
+          <div
+            className={`hud-clip border mb-6 p-4 sm:p-5 flex items-start gap-3 ${
+              creatorProfile.verification_status === "pending"
+                ? "border-[#ffd500]/40 bg-[#ffd500]/5"
+                : creatorProfile.verification_status === "rejected"
+                  ? "border-[#ff003c]/40 bg-[#ff003c]/5"
+                  : "border-[#ff6b00]/40 bg-[#ff6b00]/5"
+            }`}
+            data-testid="verify-creator-cta"
+          >
+            <ShieldCheck className={`w-6 h-6 mt-0.5 shrink-0 ${
+              creatorProfile.verification_status === "pending"
+                ? "text-[#ffd500]"
+                : creatorProfile.verification_status === "rejected"
+                  ? "text-[#ff003c]"
+                  : "text-[#ff6b00]"
+            }`} />
+            <div className="flex-1 min-w-0">
+              <div className="font-display font-bold uppercase">
+                {creatorProfile.verification_status === "pending"
+                  ? "Verification under review"
+                  : creatorProfile.verification_status === "rejected"
+                    ? "Verification rejected"
+                    : "Become a verified creator"}
+              </div>
+              <div className="text-sm text-zinc-300 mt-1">
+                {creatorProfile.verification_status === "pending"
+                  ? "Your submission is in the queue. You can keep building unlisted quizzes in the meantime."
+                  : creatorProfile.verification_status === "rejected"
+                    ? creatorProfile.rejection_reason || "Re-submit with clearer evidence."
+                    : "GC1+ players unlock the Browse tab. Anyone can still create + share quizzes via link."}
+              </div>
+            </div>
+            <Link to="/creator/verify" data-testid="verify-creator-cta-button">
+              <button className="btn-boost hud-clip px-4 py-2 text-xs whitespace-nowrap">
+                {creatorProfile.verification_status === "rejected"
+                  ? "Re-submit"
+                  : creatorProfile.verification_status === "pending"
+                    ? "View Status"
+                    : "Verify Now"}
+              </button>
+            </Link>
+          </div>
+        )}
 
         {/* STATS */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-10" data-testid="dashboard-stats">
@@ -472,6 +524,15 @@ function QuizCard({ q, owner, onDelete, isFav, onFav }) {
   const thumb = `https://i.ytimg.com/vi/${q.video_id}/hqdefault.jpg`;
   const min = q.min_rank ?? 1;
   const max = q.max_rank ?? 8;
+  const shareUrl = q.share_token ? `${window.location.origin}/q/${q.share_token}` : null;
+  const copyShare = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (shareUrl) {
+      navigator.clipboard.writeText(shareUrl);
+      toast.success("Share link copied");
+    }
+  };
   return (
     <div className="hud-clip border border-white/10 bg-[#0a0a0a] overflow-hidden group hover:border-[#ff6b00]/60 transition-all" data-testid={`quiz-card-${q.id}`}>
       <div className="relative aspect-video bg-black">
@@ -514,8 +575,22 @@ function QuizCard({ q, owner, onDelete, isFav, onFav }) {
       </div>
       <div className="p-5">
         <div className="font-display font-bold uppercase text-lg leading-tight line-clamp-2">{q.title}</div>
-        <div className="font-mono-rl text-[10px] tracking-widest text-zinc-500 mt-1">
-          BY {q.creator_name?.toUpperCase()} // {q.play_count} PLAYS
+        <div className="font-mono-rl text-[10px] tracking-widest text-zinc-500 mt-1 flex items-center gap-1 flex-wrap">
+          <span>BY {q.creator_name?.toUpperCase()}</span>
+          {q.creator_verified && (
+            <span
+              className="inline-flex items-center gap-1 text-[#00ff66]"
+              title="Verified GC1+ creator"
+              data-testid={`creator-verified-${q.id}`}
+            >
+              <ShieldCheck className="w-3 h-3" />
+              <span>VERIFIED</span>
+            </span>
+          )}
+          <span>// {q.play_count} PLAYS</span>
+          {q.visibility === "unlisted" && (
+            <span className="text-[#007aff]">// UNLISTED</span>
+          )}
         </div>
         <div className="mt-3 flex items-center gap-2 text-[10px] font-mono-rl tracking-widest">
           <span className="px-1.5 py-0.5 border" style={{ borderColor: rankColor(min), color: rankColor(min) }}>
@@ -534,6 +609,16 @@ function QuizCard({ q, owner, onDelete, isFav, onFav }) {
           </Link>
           {owner && (
             <>
+              {shareUrl && (
+                <button
+                  onClick={copyShare}
+                  className="btn-ghost-volt hud-clip px-3 py-2"
+                  title="Copy share link"
+                  data-testid={`share-quiz-${q.id}`}
+                >
+                  <Share2 className="w-4 h-4" />
+                </button>
+              )}
               <Link to={`/quizzes/${q.id}/edit`} data-testid={`edit-quiz-${q.id}`}>
                 <button className="btn-ghost-volt hud-clip px-3 py-2">
                   <Pencil className="w-4 h-4" />
